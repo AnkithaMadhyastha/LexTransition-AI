@@ -130,6 +130,7 @@ try:
     from engine.mapping_logic import map_ipc_to_bns, add_mapping
     from engine.rag_engine import search_pdfs, add_pdf, index_pdfs
     from engine.llm import summarize as llm_summarize
+    from engine.db import import_mappings_from_csv, import_mappings_from_excel, export_mappings_to_json, export_mappings_to_csv
     ENGINES_AVAILABLE = True
 except Exception:
     ENGINES_AVAILABLE = False
@@ -256,7 +257,75 @@ elif current_page == "Mapper":
         search_query = st.text_input("Enter IPC Section", placeholder="e.g., 420, 302, 378")
     with col2:
         search_btn = st.button("🔍 Find BNS Eq.", use_container_width=True)
-    
+
+    # Import/Export Section
+    st.markdown("### 📥 Import / 📤 Export Mappings")
+    col_import, col_export = st.columns(2)
+
+    with col_import:
+        uploaded_mapping = st.file_uploader("Import from CSV/Excel", type=["csv", "xlsx"], key="mapping_upload")
+        if uploaded_mapping and st.button("📥 Import Mappings", use_container_width=True):
+            try:
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_mapping.name.split('.')[-1]}") as tmp_file:
+                    tmp_file.write(uploaded_mapping.read())
+                    tmp_path = tmp_file.name
+
+                if uploaded_mapping.name.endswith('.csv'):
+                    success_count, errors = import_mappings_from_csv(tmp_path)
+                elif uploaded_mapping.name.endswith('.xlsx'):
+                    success_count, errors = import_mappings_from_excel(tmp_path)
+                else:
+                    st.error("Unsupported file format")
+                    success_count = 0
+                    errors = ["Unsupported file format"]
+
+                os.unlink(tmp_path)
+
+                if success_count > 0:
+                    st.success(f"✓ Successfully imported {success_count} mappings")
+                if errors:
+                    st.warning("Import completed with errors:")
+                    for error in errors:
+                        st.write(f"- {error}")
+
+            except Exception as e:
+                st.error(f"Import failed: {str(e)}")
+
+    with col_export:
+        export_format = st.selectbox("Export Format", ["JSON", "CSV"], key="export_format")
+        if st.button("📤 Export Mappings", use_container_width=True):
+            try:
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{export_format.lower()}") as tmp_file:
+                    tmp_path = tmp_file.name
+
+                if export_format == "JSON":
+                    success = export_mappings_to_json(tmp_path)
+                else:
+                    success = export_mappings_to_csv(tmp_path)
+
+                if success:
+                    with open(tmp_path, "rb") as f:
+                        st.download_button(
+                            label=f"📥 Download {export_format}",
+                            data=f,
+                            file_name=f"ipc_bns_mappings.{export_format.lower()}",
+                            mime="application/json" if export_format == "JSON" else "text/csv",
+                            use_container_width=True
+                        )
+                else:
+                    st.error("Export failed")
+
+                os.unlink(tmp_path)
+
+            except Exception as e:
+                st.error(f"Export failed: {str(e)}")
+
+    st.divider()
+
     # Results Section
     if search_query and search_btn:
         if ENGINES_AVAILABLE:
