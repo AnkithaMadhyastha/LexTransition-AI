@@ -11,7 +11,8 @@ __pycache__/
 venv/
 env/
 
-# Local app data
+# Local app data / DB (binary DB causes merge conflicts; keep local only)
+mapping_db.sqlite
 law_pdfs/*
 !law_pdfs/.gitkeep
 vector_store/*
