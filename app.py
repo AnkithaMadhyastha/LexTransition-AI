@@ -31,6 +31,7 @@ try:
     
     # Import the Semantic Comparator Engine
     from engine.comparator import compare_ipc_bns
+    from utils.timeout_handler import AITimeoutError
     
     ENGINES_AVAILABLE = True
 except Exception as e:
@@ -296,16 +297,14 @@ elif current_page == "Mapper":
         # 1. AI Analysis View
         if st.session_state.get('active_analysis') == ipc:
             st.divider()
-            with st.spinner("Talking to Ollama (AI)..."):
+        with st.spinner("Talking to Ollama (AI)..."):
+            try:
                 comp_result = compare_ipc_bns(ipc)
                 analysis_text = comp_result.get('analysis', "")
-                
-                # Check for tag defined in comparator.py
-                if "ERROR:" in analysis_text or "Error" in analysis_text or "Connection Error" in analysis_text:
+
+                if "ERROR:" in analysis_text:
                     st.error(f"❌ AI Error: {analysis_text.replace('ERROR:', '')}")
-                    st.info("💡 Make sure Ollama is running (`ollama serve`) and you have pulled the model (`ollama pull llama3`).")
                 else:
-                    # Final 3-column analysis layout
                     c1, c2, c3 = st.columns([1, 1.2, 1])
                     with c1:
                         st.markdown(f"**📜 IPC {ipc} Text**")
@@ -317,16 +316,19 @@ elif current_page == "Mapper":
                         st.markdown(f"**⚖️ {bns} Text**")
                         st.warning(comp_result.get('bns_text', 'No text available.'))
 
+            except AITimeoutError:
+                st.error("⚠ AI service is taking too long. Please try again.")
+
         # 2. Raw Text View
-        elif st.session_state.get('active_view_text'):
-            st.divider()
-            v1, v2 = st.columns(2)
-            with v1:
-                st.markdown("**IPC Original Text**")
-                st.text_area("ipc_raw", result.get('ipc_full_text', 'No text found in DB'), height=250, disabled=True)
-            with v2:
-                st.markdown("**BNS Updated Text**")
-                st.text_area("bns_raw", result.get('bns_full_text', 'No text found in DB'), height=250, disabled=True)
+    elif st.session_state.get('active_view_text'):
+                st.divider()
+                v1, v2 = st.columns(2)
+                with v1:
+                    st.markdown("**IPC Original Text**")
+                    st.text_area("ipc_raw", st.session_state['last_result'].get('ipc_full_text', 'No text found in DB'), height=250, disabled=True)
+                with v2:
+                    st.markdown("**BNS Updated Text**")
+                    st.text_area("bns_raw", st.session_state['last_result'].get('bns_full_text', 'No text found in DB'), height=250, disabled=True)
 
     # Add Mapping Form (for when sections aren't found)
     with st.expander("➕ Add New Mapping to Database"):
