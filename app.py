@@ -7,6 +7,7 @@ import time
 import base64
 # Import TTS engine 
 from engine.tts_handler import tts_engine
+from engine.github_stats import get_github_stats
 
 # ===== READ THEME FROM URL =====
 query_theme = st.query_params.get("theme")
@@ -269,7 +270,7 @@ url_page = _read_url_page()
 if "pending_page" in st.session_state:
     st.session_state.current_page = st.session_state.pop("pending_page")
 else:
-    if url_page in {"Home", "Mapper", "OCR", "Fact", "Settings", "Privacy", "FAQ"}:
+    if url_page in {"Home", "Mapper", "OCR", "Fact", "Community", "Settings", "Privacy", "FAQ"}:
         st.session_state.current_page = url_page
 
 nav_items = [
@@ -324,73 +325,6 @@ st.markdown(
 
 current_page = st.session_state.current_page
 
- light-mode-fix
-# ============================================================================
-# PAGE: HOME
-# ============================================================================
-if current_page == "Home":
-    st.markdown('<div class="home-header">', unsafe_allow_html=True)
-    st.markdown('<div class="home-title">⚖️ LexTransition AI</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="home-subtitle">'
-        'Your offline legal assistant powered by AI. Analyze documents, map sections, and get instant legal insights—no internet required.'
-        '</div>',
-        unsafe_allow_html=True
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown('<div class="home-what">What do you want to do?</div>', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns(2, gap="large")
-    with col1:
-        st.markdown(f"""
-        <a class="home-card" href="?page=Mapper&theme={st.session_state.theme}" target="_self">
-            <div class="home-card-header">
-                <span class="home-card-icon">✓</span>
-                <div class="home-card-title">Convert IPC to BNS</div>
-            </div>
-            <div class="home-card-desc">Map old IPC sections to new BNS equivalents.</div>
-            <div class="home-card-btn"><span>Open Mapper</span><span>›</span></div>
-        </a>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown(f"""
-        <a class="home-card" href="?page=OCR&theme={st.session_state.theme}" target="_self">
-            <div class="home-card-header">
-                <span class="home-card-icon">📄</span>
-                <div class="home-card-title">Analyze FIR / Notice</div>
-            </div>
-            <div class="home-card-desc">Extract text and action points from documents.</div>
-            <div class="home-card-btn"><span>Upload & Analyze</span><span>›</span></div>
-        </a>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    col3, col4 = st.columns(2, gap="large")
-    with col3:
-        st.markdown(f"""
-        <a class="home-card" href="?page=Fact&theme={st.session_state.theme}" target="_self">
-            <div class="home-card-header">
-                <span class="home-card-icon">📚</span>
-                <div class="home-card-title">Legal Research</div>
-            </div>
-            <div class="home-card-desc">Search and analyze case law and statutes.</div>
-            <div class="home-card-btn"><span>Start Research</span><span>›</span></div>
-        </a>
-        """, unsafe_allow_html=True)
-    with col4:
-        st.markdown(f"""
-        <a class="home-card" href="?page=Settings&theme={st.session_state.theme}" target="_self">
-            <div class="home-card-header">
-                <span class="home-card-icon">⚙️</span>
-                <div class="home-card-title">Settings</div>
-            </div>
-            <div class="home-card-desc">Configure engines and offline settings.</div>
-            <div class="home-card-btn"><span>Configure</span><span>›</span></div>
-        </a>
-        """, unsafe_allow_html=True)
-
 try:
     # ============================================================================
     # PAGE: HOME
@@ -410,22 +344,22 @@ try:
         
         col1, col2 = st.columns(2, gap="large")
         with col1:
-            st.markdown("""
-            <a class="home-card" href="?page=Mapper" target="_self">
+            st.markdown(f"""
+            <a class="home-card" href="?page=Mapper&theme={st.session_state.theme}" target="_self">
                 <div class="home-card-header">
-                    <span class="home-card-icon">✓</span>
-                    <div class="home-card-title">Convert IPC to BNS</div>
+                    <span class="home-card-icon">🔄</span>
+                    <div class="home-card-title">IPC → BNS Mapper</div>
                 </div>
-                <div class="home-card-desc">Map old IPC sections to new BNS equivalents.</div>
+                <div class="home-card-desc">Quickly find the new BNS equivalent of any IPC section.</div>
                 <div class="home-card-btn"><span>Open Mapper</span><span>›</span></div>
             </a>
             """, unsafe_allow_html=True)
         with col2:
-            st.markdown("""
-            <a class="home-card" href="?page=OCR" target="_self">
+            st.markdown(f"""
+            <a class="home-card" href="?page=OCR&theme={st.session_state.theme}" target="_self">
                 <div class="home-card-header">
                     <span class="home-card-icon">📄</span>
-                    <div class="home-card-title">Analyze FIR / Notice</div>
+                    <div class="home-card-title">Document OCR</div>
                 </div>
                 <div class="home-card-desc">Extract text and action points from documents.</div>
                 <div class="home-card-btn"><span>Upload & Analyze</span><span>›</span></div>
@@ -677,15 +611,10 @@ try:
                         # --- TTS INTEGRATION END ---
 
                     else:
-                        st.warning("⚠ No action items found.")
+                        st.error("❌ OCR Engine not available.")
+                else:
+                    st.warning("⚠ Please upload a file first.")
 
-                except Exception as e:
-                    st.error("🚨 Something went wrong during OCR processing.")
-                    st.exception(e)
-
-    # ============================================================================
-    # PAGE: FACT CHECKER
-    # ============================================================================
     elif current_page == "Fact":
         st.markdown("## 📚 Grounded Fact Checker")
         st.markdown("Ask a legal question to verify answers with citations from official PDFs.")
@@ -839,6 +768,160 @@ try:
             unsafe_allow_html=True,
         )
 
+        user_question = st.text_input("Ask a legal question...", placeholder="e.g., What is the punishment for murder?")
+        
+        if st.button("📖 Verify", use_container_width=True):
+            if user_question:
+                if ENGINES_AVAILABLE:
+                    with st.spinner("Searching official Law PDFs..."):
+                        res = search_pdfs(user_question)
+                        if res:
+                            st.success("✅ Verification complete!")
+                            st.markdown(res)
+                            with st.spinner("🎙️ Preparing audio..."):
+                                audio_path = tts_engine.generate_audio(res, "temp_fact.wav")
+                                if audio_path and os.path.exists(audio_path):
+                                    render_agent_audio(audio_path, title="Legal Fact Dictation")
+                        else:
+                            st.info("⚠ No exact citations found. Try a different query.")
+                else:
+                    st.error("❌ RAG Engine offline.")
+            else:
+                st.warning("⚠ Please enter a question.")
+
+    elif current_page == "Settings":
+        st.markdown("## ⚙️ Settings / About")
+        st.divider()
+        st.markdown("""
+        ### Application Information
+        - **Version:** 1.0.0
+        - **Backend:** Python + Streamlit
+        - **Intelligence:** Local LLM (Ollama) + Law Mapper Engine
+        
+        ### Engine Status
+        """)
+        if ENGINES_AVAILABLE:
+            st.success("✅ Legal Engines: Online")
+        else:
+            st.error("❌ Legal Engines: Offline")
+        
+        st.markdown("### User Controls")
+        if st.button("Clear Cache & Rerun"):
+            st.session_state.clear()
+            st.rerun()
+
+    elif current_page == "FAQ":
+        st.markdown("## ❓ Frequently Asked Questions")
+        st.divider()
+        with st.expander("**What is LexTransition AI?**"):
+            st.write("An offline-first legal assistant for IPC to BNS transition.")
+        with st.expander("**Is my data safe?**"):
+            st.write("Yes, all processing is local. No data is sent to the cloud.")
+
+    elif current_page == "Privacy":
+        st.markdown("## 🔒 Privacy Policy")
+        st.divider()
+        st.write("LexTransition AI processes all data locally on your device. We do not collect or store your personal information on any external servers.")
+
+    elif current_page == "Community":
+        st.markdown("## 🤝 Community Hub")
+        st.markdown("Join us in building the future of offline legal technology in India.")
+        st.divider()
+        
+        gh_stats = get_github_stats()
+        
+        # Stats Dashboard
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("⭐ Stars", gh_stats.get('stars', 0))
+        with c2:
+            st.metric("🍴 Forks", gh_stats.get('forks', 0))
+        with c3:
+            st.metric("🔄 Pull Requests", gh_stats.get('pull_requests', 0))
+        with c4:
+            st.metric("🐞 Open Issues", gh_stats.get('issues', 0))
+            
+        st.write("###")
+        
+        col_main, col_side = st.columns([2, 1])
+        
+        with col_main:
+            st.markdown("""
+            ### 🚀 How to Contribute
+            Whether you are a developer, a legal professional, or a student, your help is invaluable!
+            
+            - **Report Bugs**: Found an edge case in transition mapping? Let us know.
+            - **Improve Mappings**: Help us verify more sections between IPC and BNS.
+            - **Code**: Check out our 'Good First Issues' on GitHub.
+            - **Documentation**: Help us make the legal explanations clearer for everyone.
+            """)
+            
+            st.markdown(f"""
+            <a href="https://github.com/SharanyaAchanta/LexTransition-AI" target="_blank" style="text-decoration:none;">
+                <div style="background:rgba(203, 166, 99, 0.1); border:1px solid rgba(203, 166, 99, 0.4); padding:20px; border-radius:10px; text-align:center;">
+                    <h3 style="color:#cb924f; margin:0;">View on GitHub</h3>
+                    <p style="color:#94a3b8; margin:10px 0 0;">Browse the source code, issues, and discussions.</p>
+                </div>
+            </a>
+            """, unsafe_allow_html=True)
+            
+        with col_side:
+            st.markdown("""
+            ### 📜 Project Info
+            - **License**: MIT
+            - **Stack**: Python, Streamlit, Ollama
+            - **Goal**: Privacy-first legal awareness.
+            """)
+            st.info("💡 **Tip**: Mention this project on LinkedIn to help more legal professionals transition to the new laws!")
+
+    # Fetch GitHub Stats
+    gh_stats = get_github_stats()
+
+    # Footer with dynamic GitHub stats & Community Link
+    # Note: Removed blank lines and internal comments to fix markdown parsing issues
+    st.markdown(
+        f"""
+<div class="app-footer">
+<div class="app-footer-inner" style="flex-direction: column; align-items: flex-start; gap: 12px;">
+<div style="display: flex; align-items: center; gap: 15px; width: 100%; flex-wrap: wrap;">
+<span class="top-chip">Offline Mode</span>
+<span class="top-chip">Privacy First</span>
+<a class="top-credit" href="?page=Privacy" target="_self">Privacy Policy</a>
+<a class="top-credit" href="?page=FAQ" target="_self">FAQ</a>
+</div>
+<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; flex-wrap: wrap; gap: 12px;">
+<div class="footer-stats" style="display:flex; gap:10px; align-items: center;">
+<div class="stat-item" title="Stars" style="display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05); padding:4px 10px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); color:#e2e8f0; font-size:12px; font-weight:600;">
+<span style="color:#eab308;">⭐</span> {gh_stats.get('stars', 0)}
+</div>
+<div class="stat-item" title="Forks" style="display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05); padding:4px 10px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); color:#e2e8f0; font-size:12px; font-weight:600;">
+<span style="color:#94a3b8;">🍴</span> {gh_stats.get('forks', 0)}
+</div>
+<div class="stat-item" title="Pull Requests" style="display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05); padding:4px 10px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); color:#e2e8f0; font-size:12px; font-weight:600;">
+<span style="color:#60a5fa;">🔄</span> {gh_stats.get('pull_requests', 0)}
+</div>
+<div class="stat-item" title="Open Issues" style="display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05); padding:4px 10px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); color:#e2e8f0; font-size:12px; font-weight:600;">
+<span style="color:#f87171;">🐞</span> {gh_stats.get('issues', 0)}
+</div>
+</div>
+<div class="footer-socials" style="display:flex; gap:12px; align-items:center;">
+<a href="?page=Community" target="_self" class="footer-social-link" title="Community Hub" style="display:flex; align-items:center; text-decoration:none; background:rgba(255, 255, 255, 0.05); border:1px solid rgba(255, 255, 255, 0.1); padding:6px; border-radius:6px; transition: all 0.2s ease;">
+<span style="font-size:18px;">🤝</span>
+</a>
+<a href="https://github.com/SharanyaAchanta/LexTransition-AI" target="_blank" title="View Source on GitHub" style="display:flex; align-items:center; text-decoration:none; background:rgba(255, 255, 255, 0.05); border:1px solid rgba(255, 255, 255, 0.1); padding:6px; border-radius:6px; transition: all 0.2s ease;">
+<img src="https://cdn.simpleicons.org/github/ffffff" height="18" alt="GitHub">
+</a>
+<a href="https://linkedin.com/in/sharanya-achanta-946297276" target="_blank" title="LinkedIn" style="opacity:0.8; transition:opacity 0.2s; display: flex;">
+<img src="https://upload.wikimedia.org/wikipedia/commons/8/81/LinkedIn_icon.svg" height="18" alt="LinkedIn">
+</a>
+</div>
+</div>
+</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
 except Exception as e:
-    st.error("Unexpected Error")
+    st.error("🚨 An unexpected error occurred.")
     st.exception(e)
