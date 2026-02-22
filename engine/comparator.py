@@ -4,6 +4,10 @@ import requests
 import json
 from typing import Dict, Optional
 
+# Simple in-memory cache
+from typing import Dict
+AI_CACHE: Dict[str, str] = {}
+
 # import db, mapping_logic engines
 from engine import db, mapping_logic
 from utils.timeout_handler import execute_with_timeout_retry, AITimeoutError
@@ -46,6 +50,14 @@ def compare_ipc_bns(user_query: str) -> Dict[str, str]:
         "metadata": mapping  # Contains category, source, notes
     }
 def _call_ollama_diff(ipc_text: str, bns_text: str) -> str:
+
+    cache_key = f"{ipc_text}::{bns_text}"
+
+    # Check cache first
+    if cache_key in AI_CACHE:
+        print(f"[CACHE HIT] {cache_key[:40]}...")
+        return AI_CACHE[cache_key]
+
     if not OLLAMA_URL:
         return "ERROR: AI Offline. Please check your Ollama connection."
 
@@ -81,7 +93,11 @@ def _call_ollama_diff(ipc_text: str, bns_text: str) -> str:
         resp = execute_with_timeout_retry(_request, retries=2, timeout=30)
 
         if resp.status_code == 200:
-            return resp.json().get("response", "No response generated.")
+           analysis = resp.json().get("response", "No response generated.")
+           print(f"[CACHE STORE] {cache_key[:40]}...")
+           AI_CACHE[cache_key] = analysis
+           return analysis
+        
         else:
             return f"ERROR: Ollama returned status {resp.status_code}"
 
