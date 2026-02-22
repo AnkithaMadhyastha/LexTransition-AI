@@ -8,6 +8,7 @@ import base64
 # Import TTS engine 
 from engine.tts_handler import tts_engine
 from engine.github_stats import get_github_stats
+from engine.risk_analyzer import analyze_risk
 
 # ===== READ THEME FROM URL =====
 query_theme = st.query_params.get("theme")
@@ -572,10 +573,9 @@ try:
             uploaded_file = st.file_uploader("Upload (FIR/Notice)", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
             if uploaded_file:
                 st.image(uploaded_file, width=500)
-        
         with col2:
             if st.button("🔧 Extract & Analyze", use_container_width=True):
-                # Fixed the indentation for this entire block so it executes inside the button click!
+
                 if uploaded_file is None:
                     st.warning("⚠ Please upload a file first.")
                     st.stop()
@@ -586,7 +586,7 @@ try:
 
                 try:
                     with st.spinner("🔍 Extracting text... Please wait"):
-                        raw = uploaded_file.getvalue()   # <-- change here
+                        raw = uploaded_file.getvalue()
                         extracted = extract_text(raw)
 
                     if not extracted or not extracted.strip():
@@ -596,6 +596,34 @@ try:
                     st.success("✅ Text extraction completed!")
                     st.text_area("Extracted Text", extracted, height=300)
 
+                    # ================= RISK ANALYSIS =================
+                    risk_result = analyze_risk(extracted)
+
+                    st.markdown("### ⚠️ Legal Risk Assessment")
+
+                    severity = risk_result["severity"]
+                    sections = risk_result["sections"]
+                    guidance = risk_result["guidance"]
+                    punishments = risk_result.get("punishment", [])
+
+                    if punishments:
+                        st.markdown("### ⚖️ Possible Punishment")
+                        for p in punishments:
+                            st.info(p)
+
+                    if severity == "High":
+                        st.error(f"🔴 Severity Level: {severity}")
+                    elif severity == "Medium":
+                        st.warning(f"🟠 Severity Level: {severity}")
+                    else:
+                        st.success(f"🟢 Severity Level: {severity}")
+
+                    if sections:
+                        st.write("**Detected Sections:**", ", ".join(sections))
+                    else:
+                        st.write("**Detected Sections:** None")
+                    st.info(f"**Guidance:** {guidance}")
+
                     with st.spinner("🤖 Generating action items..."):
                         summary = llm_summarize(extracted, question="Action items?")
 
@@ -603,18 +631,16 @@ try:
                         st.success("✅ Analysis completed!")
                         st.info(f"**Action Item:** {summary}")
 
-                        # --- TTS INTEGRATION START (OCR Action Items) ---
                         with st.spinner("🎙️ Agent is preparing action items dictation..."):
                             audio_path = tts_engine.generate_audio(summary, "temp_ocr.wav")
                             if audio_path and os.path.exists(audio_path):
                                 render_agent_audio(audio_path, title="Action Items Dictation")
-                        # --- TTS INTEGRATION END ---
 
                     else:
-                        st.error("❌ OCR Engine not available.")
-                else:
-                    st.warning("⚠ Please upload a file first.")
+                        st.error("❌ LLM Engine not available.")
 
+                except Exception as e:
+                    st.error(f"❌ Error occurred: {e}")
     elif current_page == "Fact":
         st.markdown("## 📚 Grounded Fact Checker")
         st.markdown("Ask a legal question to verify answers with citations from official PDFs.")
@@ -742,137 +768,137 @@ try:
     Mappings are stored in **`mapping_db.json`** in the project root. You can edit this file or use the Mapper UI to add/update entries. For bulk updates, use the engine’s import/export utilities (e.g. CSV/Excel) if available in your build.
     """)
 
-    # Footer
-    st.markdown(
-        """
-    <div class="app-footer">
-    <div class="app-footer-inner">
-        <span class="top-chip">Offline Mode</span>
-        <span class="top-chip">Privacy First</span>
-        <a class="top-credit" href="?page=Privacy" target="_self">Privacy Policy</a>
-        <a class="top-credit" href="?page=FAQ" target="_self">FAQ</a>
-        <a class="top-credit" href="https://www.flaticon.com/" target="_blank" rel="noopener noreferrer">Icons: Flaticon</a>
-        <div class="footer-socials">
-        <a href="https://github.com/SharanyaAchanta/" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="GitHub">
-            <img src="https://cdn.simpleicons.org/github/ffffff" height="20" alt="GitHub">
-        </a>
-        <a href="https://share.streamlit.io/user/sharanyaachanta" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="Streamlit">
-            <img src="https://cdn.simpleicons.org/streamlit/ff4b4b" height="20" alt="Streamlit">
-        </a>
-        <a href="https://linkedin.com/in/sharanya-achanta-946297276" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="LinkedIn">
-            <img src="https://upload.wikimedia.org/wikipedia/commons/8/81/LinkedIn_icon.svg" height="20" alt="LinkedIn">
-        </a>
-        </div>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
+    # # Footer
+    # st.markdown(
+    #     """
+    # <div class="app-footer">
+    # <div class="app-footer-inner">
+    #     <span class="top-chip">Offline Mode</span>
+    #     <span class="top-chip">Privacy First</span>
+    #     <a class="top-credit" href="?page=Privacy" target="_self">Privacy Policy</a>
+    #     <a class="top-credit" href="?page=FAQ" target="_self">FAQ</a>
+    #     <a class="top-credit" href="https://www.flaticon.com/" target="_blank" rel="noopener noreferrer">Icons: Flaticon</a>
+    #     <div class="footer-socials">
+    #     <a href="https://github.com/SharanyaAchanta/" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="GitHub">
+    #         <img src="https://cdn.simpleicons.org/github/ffffff" height="20" alt="GitHub">
+    #     </a>
+    #     <a href="https://share.streamlit.io/user/sharanyaachanta" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="Streamlit">
+    #         <img src="https://cdn.simpleicons.org/streamlit/ff4b4b" height="20" alt="Streamlit">
+    #     </a>
+    #     <a href="https://linkedin.com/in/sharanya-achanta-946297276" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="LinkedIn">
+    #         <img src="https://upload.wikimedia.org/wikipedia/commons/8/81/LinkedIn_icon.svg" height="20" alt="LinkedIn">
+    #     </a>
+    #     </div>
+    #     </div>
+    #     """,
+    #         unsafe_allow_html=True,
+    #     )
 
-        user_question = st.text_input("Ask a legal question...", placeholder="e.g., What is the punishment for murder?")
+    #     user_question = st.text_input("Ask a legal question...", placeholder="e.g., What is the punishment for murder?")
         
-        if st.button("📖 Verify", use_container_width=True):
-            if user_question:
-                if ENGINES_AVAILABLE:
-                    with st.spinner("Searching official Law PDFs..."):
-                        res = search_pdfs(user_question)
-                        if res:
-                            st.success("✅ Verification complete!")
-                            st.markdown(res)
-                            with st.spinner("🎙️ Preparing audio..."):
-                                audio_path = tts_engine.generate_audio(res, "temp_fact.wav")
-                                if audio_path and os.path.exists(audio_path):
-                                    render_agent_audio(audio_path, title="Legal Fact Dictation")
-                        else:
-                            st.info("⚠ No exact citations found. Try a different query.")
-                else:
-                    st.error("❌ RAG Engine offline.")
-            else:
-                st.warning("⚠ Please enter a question.")
+    #     if st.button("📖 Verify", use_container_width=True):
+    #         if user_question:
+    #             if ENGINES_AVAILABLE:
+    #                 with st.spinner("Searching official Law PDFs..."):
+    #                     res = search_pdfs(user_question)
+    #                     if res:
+    #                         st.success("✅ Verification complete!")
+    #                         st.markdown(res)
+    #                         with st.spinner("🎙️ Preparing audio..."):
+    #                             audio_path = tts_engine.generate_audio(res, "temp_fact.wav")
+    #                             if audio_path and os.path.exists(audio_path):
+    #                                 render_agent_audio(audio_path, title="Legal Fact Dictation")
+    #                     else:
+    #                         st.info("⚠ No exact citations found. Try a different query.")
+    #             else:
+    #                 st.error("❌ RAG Engine offline.")
+    #         else:
+    #             st.warning("⚠ Please enter a question.")
 
-    elif current_page == "Settings":
-        st.markdown("## ⚙️ Settings / About")
-        st.divider()
-        st.markdown("""
-        ### Application Information
-        - **Version:** 1.0.0
-        - **Backend:** Python + Streamlit
-        - **Intelligence:** Local LLM (Ollama) + Law Mapper Engine
+    # elif current_page == "Settings":
+    #     st.markdown("## ⚙️ Settings / About")
+    #     st.divider()
+    #     st.markdown("""
+    #     ### Application Information
+    #     - **Version:** 1.0.0
+    #     - **Backend:** Python + Streamlit
+    #     - **Intelligence:** Local LLM (Ollama) + Law Mapper Engine
         
-        ### Engine Status
-        """)
-        if ENGINES_AVAILABLE:
-            st.success("✅ Legal Engines: Online")
-        else:
-            st.error("❌ Legal Engines: Offline")
+    #     ### Engine Status
+    #     """)
+    #     if ENGINES_AVAILABLE:
+    #         st.success("✅ Legal Engines: Online")
+    #     else:
+    #         st.error("❌ Legal Engines: Offline")
         
-        st.markdown("### User Controls")
-        if st.button("Clear Cache & Rerun"):
-            st.session_state.clear()
-            st.rerun()
+    #     st.markdown("### User Controls")
+    #     if st.button("Clear Cache & Rerun"):
+    #         st.session_state.clear()
+    #         st.rerun()
 
-    elif current_page == "FAQ":
-        st.markdown("## ❓ Frequently Asked Questions")
-        st.divider()
-        with st.expander("**What is LexTransition AI?**"):
-            st.write("An offline-first legal assistant for IPC to BNS transition.")
-        with st.expander("**Is my data safe?**"):
-            st.write("Yes, all processing is local. No data is sent to the cloud.")
+    # elif current_page == "FAQ":
+    #     st.markdown("## ❓ Frequently Asked Questions")
+    #     st.divider()
+    #     with st.expander("**What is LexTransition AI?**"):
+    #         st.write("An offline-first legal assistant for IPC to BNS transition.")
+    #     with st.expander("**Is my data safe?**"):
+    #         st.write("Yes, all processing is local. No data is sent to the cloud.")
 
-    elif current_page == "Privacy":
-        st.markdown("## 🔒 Privacy Policy")
-        st.divider()
-        st.write("LexTransition AI processes all data locally on your device. We do not collect or store your personal information on any external servers.")
+    # elif current_page == "Privacy":
+    #     st.markdown("## 🔒 Privacy Policy")
+    #     st.divider()
+    #     st.write("LexTransition AI processes all data locally on your device. We do not collect or store your personal information on any external servers.")
 
-    elif current_page == "Community":
-        st.markdown("## 🤝 Community Hub")
-        st.markdown("Join us in building the future of offline legal technology in India.")
-        st.divider()
+    # elif current_page == "Community":
+    #     st.markdown("## 🤝 Community Hub")
+    #     st.markdown("Join us in building the future of offline legal technology in India.")
+    #     st.divider()
         
-        gh_stats = get_github_stats()
+        # gh_stats = get_github_stats()
         
-        # Stats Dashboard
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("⭐ Stars", gh_stats.get('stars', 0))
-        with c2:
-            st.metric("🍴 Forks", gh_stats.get('forks', 0))
-        with c3:
-            st.metric("🔄 Pull Requests", gh_stats.get('pull_requests', 0))
-        with c4:
-            st.metric("🐞 Open Issues", gh_stats.get('issues', 0))
+        # # Stats Dashboard
+        # c1, c2, c3, c4 = st.columns(4)
+        # with c1:
+        #     st.metric("⭐ Stars", gh_stats.get('stars', 0))
+        # with c2:
+        #     st.metric("🍴 Forks", gh_stats.get('forks', 0))
+        # with c3:
+        #     st.metric("🔄 Pull Requests", gh_stats.get('pull_requests', 0))
+        # with c4:
+        #     st.metric("🐞 Open Issues", gh_stats.get('issues', 0))
             
-        st.write("###")
+        # st.write("###")
         
-        col_main, col_side = st.columns([2, 1])
+        # col_main, col_side = st.columns([2, 1])
         
-        with col_main:
-            st.markdown("""
-            ### 🚀 How to Contribute
-            Whether you are a developer, a legal professional, or a student, your help is invaluable!
+        # with col_main:
+        #     st.markdown("""
+        #     ### 🚀 How to Contribute
+        #     Whether you are a developer, a legal professional, or a student, your help is invaluable!
             
-            - **Report Bugs**: Found an edge case in transition mapping? Let us know.
-            - **Improve Mappings**: Help us verify more sections between IPC and BNS.
-            - **Code**: Check out our 'Good First Issues' on GitHub.
-            - **Documentation**: Help us make the legal explanations clearer for everyone.
-            """)
+        #     - **Report Bugs**: Found an edge case in transition mapping? Let us know.
+        #     - **Improve Mappings**: Help us verify more sections between IPC and BNS.
+        #     - **Code**: Check out our 'Good First Issues' on GitHub.
+        #     - **Documentation**: Help us make the legal explanations clearer for everyone.
+        #     """)
             
-            st.markdown(f"""
-            <a href="https://github.com/SharanyaAchanta/LexTransition-AI" target="_blank" style="text-decoration:none;">
-                <div style="background:rgba(203, 166, 99, 0.1); border:1px solid rgba(203, 166, 99, 0.4); padding:20px; border-radius:10px; text-align:center;">
-                    <h3 style="color:#cb924f; margin:0;">View on GitHub</h3>
-                    <p style="color:#94a3b8; margin:10px 0 0;">Browse the source code, issues, and discussions.</p>
-                </div>
-            </a>
-            """, unsafe_allow_html=True)
+        #     st.markdown(f"""
+        #     <a href="https://github.com/SharanyaAchanta/LexTransition-AI" target="_blank" style="text-decoration:none;">
+        #         <div style="background:rgba(203, 166, 99, 0.1); border:1px solid rgba(203, 166, 99, 0.4); padding:20px; border-radius:10px; text-align:center;">
+        #             <h3 style="color:#cb924f; margin:0;">View on GitHub</h3>
+        #             <p style="color:#94a3b8; margin:10px 0 0;">Browse the source code, issues, and discussions.</p>
+        #         </div>
+        #     </a>
+        #     """, unsafe_allow_html=True)
             
-        with col_side:
-            st.markdown("""
-            ### 📜 Project Info
-            - **License**: MIT
-            - **Stack**: Python, Streamlit, Ollama
-            - **Goal**: Privacy-first legal awareness.
-            """)
-            st.info("💡 **Tip**: Mention this project on LinkedIn to help more legal professionals transition to the new laws!")
+        # with col_side:
+        #     st.markdown("""
+        #     ### 📜 Project Info
+        #     - **License**: MIT
+        #     - **Stack**: Python, Streamlit, Ollama
+        #     - **Goal**: Privacy-first legal awareness.
+        #     """)
+        #     st.info("💡 **Tip**: Mention this project on LinkedIn to help more legal professionals transition to the new laws!")
 
     # Fetch GitHub Stats
     gh_stats = get_github_stats()
