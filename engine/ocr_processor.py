@@ -7,7 +7,7 @@ Functions:
 """
 import io
 import streamlit as st
-from typing import Any, List
+from typing import Any, Dict, List
 
 # Load the cached model
 @st.cache_resource(show_spinner=False)
@@ -63,7 +63,7 @@ def extract_text_batch(file_list: List[Any]) -> Dict[str, Dict[str, Any]]:
         file_list: List of file-like objects with .read() and .name attributes
         
     Returns:
-        Dict with the filename as key and dict containing:
+        Dict with filename as key and dict containing:
             - 'text': extracted text
             - 'status': 'success' or 'error'
             - 'error': error message if failed
