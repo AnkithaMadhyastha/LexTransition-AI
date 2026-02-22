@@ -7,7 +7,7 @@ Functions:
 """
 import io
 import streamlit as st
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 # Load the cached model
 @st.cache_resource(show_spinner=False)
