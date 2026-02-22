@@ -277,6 +277,7 @@ nav_items = [
     ("Home", "Home"),
     ("Mapper", "IPC -> BNS Mapper"),
     ("OCR", "Document OCR"),
+    ("Glossary", "Glossary"),
     ("Fact", "Fact Checker"),
     ("Settings", "Settings / About"),
     ("FAQ", "FAQ"),
