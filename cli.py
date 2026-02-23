@@ -15,7 +15,7 @@ from engine.db import (
 def _cmd_map(args: argparse.Namespace) -> int:
     result = map_ipc_to_bns(args.ipc_section)
     if not result:
-        print("No mapping found")
+        logger.info("No mapping found")
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

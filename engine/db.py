@@ -8,6 +8,8 @@ import/export functionality, and migration from JSON.
 import sqlite3
 import json
 import os
+import logging
+logger = logging.getLogger(__name__)
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
@@ -92,10 +94,10 @@ def migrate_from_json():
 
         conn.commit()
         conn.close()
-        print(f"Successfully migrated {len(data)} mappings from JSON to database.")
+        logger.info(f"Successfully migrated {len(data)} mappings from JSON to database.")
 
     except Exception as e:
-        print(f"Error during migration: {e}")
+        logger.error(f"Error during migration: {e}")
 
 def insert_mapping(ipc_section: str, bns_section: str, 
                    ipc_full_text: str = "", bns_full_text: str = "", 
@@ -115,10 +117,10 @@ def insert_mapping(ipc_section: str, bns_section: str,
         return True
 
     except sqlite3.IntegrityError:
-        print(f"⚠️ DB Warning: Section {ipc_section} already exists.")
+        logger.warning(f"⚠️ DB Warning: Section {ipc_section} already exists.")
         return False
     except Exception as e:
-        print(f"Error inserting mapping: {e}")
+        logger.error(f"Error inserting mapping: {e}")
         return False
 
 def get_mapping(ipc_section: str) -> Optional[Dict]:
@@ -144,7 +146,7 @@ def get_mapping(ipc_section: str) -> Optional[Dict]:
         return None
 
     except Exception as e:
-        print(f"Error getting mapping: {e}")
+        logger.error(f"Error getting mapping: {e}")
         return None
 
 def get_all_mappings() -> Dict[str, Dict]:
@@ -170,7 +172,7 @@ def get_all_mappings() -> Dict[str, Dict]:
         return mappings
 
     except Exception as e:
-        print(f"Error getting all mappings: {e}")
+        logger.error(f"Error getting all mappings: {e}")
         return {}
 
 def get_mappings_by_category(category: str) -> Dict[str, Dict]:
@@ -196,7 +198,7 @@ def get_mappings_by_category(category: str) -> Dict[str, Dict]:
         return mappings
 
     except Exception as e:
-        print(f"Error getting mappings by category: {e}")
+        logger.error(f"Error getting mappings by category: {e}")
         return {}
 
 def get_categories() -> List[str]:
@@ -212,7 +214,7 @@ def get_categories() -> List[str]:
         return [row[0] for row in rows if row[0]]
 
     except Exception as e:
-        print(f"Error getting categories: {e}")
+        logger.error(f"Error getting categories: {e}")
         return []
 
 def get_mapping_count() -> int:
@@ -228,7 +230,7 @@ def get_mapping_count() -> int:
         return count
 
     except Exception as e:
-        print(f"Error getting mapping count: {e}")
+        logger.error(f"Error getting mapping count: {e}")
         return 0
 
 def get_metadata() -> Dict:
@@ -250,7 +252,7 @@ def get_metadata() -> Dict:
         return metadata
 
     except Exception as e:
-        print(f"Error getting metadata: {e}")
+        logger.error(f"Error getting metadata: {e}")
         return {}
 
 
@@ -367,7 +369,7 @@ def export_mappings_to_json(file_path: str) -> bool:
         return True
 
     except Exception as e:
-        print(f"Error exporting to JSON: {e}")
+        logger.error(f"Error exporting to JSON: {e}")
         return False
 
 
@@ -394,7 +396,7 @@ def export_mappings_to_csv(file_path: str) -> bool:
         return True
 
     except Exception as e:
-        print(f"Error exporting to CSV: {e}")
+        logger.error(f"Error exporting to CSV: {e}")
         return False
 
 # Initialize database on import
