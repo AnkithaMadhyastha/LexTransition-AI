@@ -9,6 +9,8 @@ import sqlite3
 import json
 import os
 import shutil
+import logging
+logger = logging.getLogger(__name__)
 import pandas as pd
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -360,7 +362,7 @@ def update_mapping(
         conn.commit()
         return cursor.rowcount > 0
     except Exception as e:
-        print(f"Error updating mapping: {e}")
+        logger.error(f"Error updating mapping: {e}")
         return False
     finally:
         if conn is not None:
@@ -443,7 +445,7 @@ def get_mapping_audit(ipc_section: Optional[str] = None, limit: int = 100) -> Li
             )
         return entries
     except Exception as e:
-        print(f"Error getting mapping audit: {e}")
+        logger.error(f"Error getting mapping audit: {e}")
         return []
 
 def backup_database(backup_path: Optional[str] = None) -> Optional[str]:
@@ -459,7 +461,7 @@ def backup_database(backup_path: Optional[str] = None) -> Optional[str]:
         shutil.copy2(_DB_FILE, backup_path)
         return backup_path
     except Exception as e:
-        print(f"Error backing up database: {e}")
+        logger.error(f"Error backing up database: {e}")
         return None
 
 def _check_sqlite_integrity(db_path: str) -> bool:
@@ -490,7 +492,7 @@ def restore_database(backup_path: str) -> bool:
         shutil.copy2(backup_path, _DB_FILE)
         return _check_sqlite_integrity(_DB_FILE)
     except Exception as e:
-        print(f"Error restoring database: {e}")
+        logger.error(f"Error restoring database: {e}")
         return False
 
 
