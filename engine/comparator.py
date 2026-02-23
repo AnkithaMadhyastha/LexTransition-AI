@@ -33,7 +33,7 @@ def compare_ipc_bns(user_query: str) -> Dict[str, str]:
     bns_text = mapping.get('bns_full_text') or "Text not available in database."
 
     # Semantic Analysis
-    ai_analysis = _call_ollama_diff(ipc_text, bns_text)
+    ai_analysis = _call_ollama_diff(ipc_text, bns_text, stream=True)
 
     return {
         "ipc_section": ipc_id,
@@ -44,7 +44,7 @@ def compare_ipc_bns(user_query: str) -> Dict[str, str]:
         "metadata": mapping  # Contains category, source, notes
     }
 
-def _call_ollama_diff(ipc_text: str, bns_text: str) -> str:
+def _call_ollama_diff(ipc_text: str, bns_text: str, stream: bool = False) -> str:
     """
     Helper to send the prompt to the local Ollama instance.
     """
@@ -67,20 +67,49 @@ def _call_ollama_diff(ipc_text: str, bns_text: str) -> str:
     )
 
     try:
-        payload = {"model": OLLAMA_MODEL, 
-                   "prompt": prompt, 
-                   "stream": False}
-        
-        resp = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=30)
-        
-        if resp.status_code == 200:
-            return resp.json().get("response", "No response generated.")
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": stream
+        }
+
+        if stream:
+            resp = requests.post(
+                f"{OLLAMA_URL}/api/generate",
+                json=payload,
+                stream=True,
+                timeout=60
+            )
+
+            if resp.status_code != 200:
+                return f"ERROR: Ollama returned status {resp.status_code}"
+
+            full_response = ""
+
+            for line in resp.iter_lines():
+                if line:
+                    try:
+                        chunk = json.loads(line.decode("utf-8"))
+                        if "response" in chunk:
+                            full_response += chunk["response"]
+                    except json.JSONDecodeError:
+                        continue
+
+            return full_response if full_response else "No response generated."
+
         else:
-            return f"ERROR: Ollama returned status {resp.status_code}"
-            
+            resp = requests.post(
+                f"{OLLAMA_URL}/api/generate",
+                json=payload,
+                timeout=30
+            )
+
+            if resp.status_code == 200:
+                return resp.json().get("response", "No response generated.")
+            else:
+                return f"ERROR: Ollama returned status {resp.status_code}"
+
     except requests.exceptions.ConnectionError:
         return "ERROR: Connection refused. Is Ollama running? (Try 'ollama serve')"
     except Exception as e:
         return f"ERROR: {str(e)}"
-
-    return "Analysis failed."
