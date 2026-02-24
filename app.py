@@ -14,7 +14,7 @@ from engine.bail_analyzer import analyze_bail
 from engine.summarizer import generate_summary
 from engine.deadline_extractor import analyze_deadlines
 from engine.autocomplete import get_suggestions
-
+from engine.resource_monitor import get_resource_usage
 from engine.pdf_exporter import generate_pdf_report
 
 from engine.bookmark_manager import add_bookmark
@@ -1186,6 +1186,33 @@ Failure to comply may result in legal action.
                     st.error(f"🔴 {name} — Not Available")
 
         st.info("If any module shows Not Available, please check installation or configuration.")
+
+        st.markdown("### 📊 Resource Usage Monitor")
+
+        usage = get_resource_usage()
+
+        if usage:
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric("CPU Usage", f"{usage['cpu']} %")
+
+            with col2:
+                st.metric(
+                    "RAM Usage",
+                    f"{usage['ram_percent']} %",
+                    f"{usage['ram_used_gb']} / {usage['ram_total_gb']} GB"
+                )
+
+            with col3:
+                st.metric(
+                    "Disk Usage",
+                    f"{usage['disk_percent']} %",
+                    f"{usage['disk_used_gb']} / {usage['disk_total_gb']} GB"
+                )
+
+        else:
+            st.warning("Resource monitor unavailable.")
     # ============================================================================
     # PAGE: PRIVACY POLICY
     # ============================================================================
