@@ -10,10 +10,14 @@ import glob
 import re
 import json
 import hashlib
+from PIL.Image import item
 import streamlit as st
 import numpy as np
+import logging
+logger = logging.getLogger(__name__)
 
 try:
+    import pdfplumber
     import pdfplumber
 except Exception:
     pdfplumber = None
@@ -26,7 +30,18 @@ def load_embedding_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 # Check environment config
+# Load the cached model
+@st.cache_resource(show_spinner=False)
+def load_embedding_model():
+    """Loads the SentenceTransformer model into memory only once."""
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+# Check environment config
 _USE_EMB = os.environ.get("LTA_USE_EMBEDDINGS") == "1"
+_EMB_AVAILABLE = False
+
+# Validate dependencies availability
 _EMB_AVAILABLE = False
 
 # Validate dependencies availability
@@ -34,6 +49,7 @@ try:
     if _USE_EMB:
         from sentence_transformers import SentenceTransformer  # type: ignore
         _EMB_AVAILABLE = True
+
 
 except Exception:
     _EMB_AVAILABLE = False
@@ -45,6 +61,7 @@ try:
 except Exception:
     _EMB_ENGINE_AVAILABLE = False
 
+_INDEX = []        # page-level index
 _INDEX = []        # page-level index
 _INDEX_LOADED = False
 _EMB_INDEX = []    # cached embeddings for current docs
@@ -164,7 +181,7 @@ def index_pdfs(dir_path="law_pdfs"):
             for d, v in zip(_INDEX, vecs):
                 _EMB_INDEX.append({"file": d["file"], "page": d["page"], "text": d["text"], "vec": v})
         except Exception as e:
-            print(f"Embedding generation failed: {e}")
+            logger.error(f"Embedding generation failed: {e}")
 
     return True
 
@@ -186,6 +203,9 @@ def _emb_search(query: str, top_k: int = 3):
         # --- USE CACHED MODEL HERE ---
         model = load_embedding_model()
         
+        # --- USE CACHED MODEL HERE ---
+        model = load_embedding_model()
+        
         qvec = model.encode([query], convert_to_numpy=True)[0]
         scores = []
         for d in _EMB_INDEX:
@@ -195,26 +215,66 @@ def _emb_search(query: str, top_k: int = 3):
             scores.append((sim, d["file"], d["page"], d["text"]))
         scores.sort(key=lambda x: x[0], reverse=True)
         
+        
         results = scores[:top_k]
-        md = ["> **Answer (embedding search, grounded):**\n"]
+
+        structured = []
         for sim, file, page, text in results:
-            snippet = text[:300].replace("\n", " ")
-            md.append(f"> - **Source:** {file} | **Page:** {page} | **Score:** {sim:.3f}\n>   > _{snippet}_\n")
-        return "\n".join(md)
+            structured.append({
+                "file": file,
+                "page": page,
+                "text": text,
+                "vector_score": float(sim)
+            })
+
+        return structured
     except Exception:
         return None
 
+def _keyword_search(query: str, top_k: int = 3):
+    if not _INDEX_LOADED:
+        index_pdfs()
+    if not _INDEX:
+        return []
+
+    tokens = _tokenize_query(query.strip())
+    if not tokens:
+        return []
+
+    results = []
+
+    for doc in _INDEX:
+        txt = doc["text"].lower()
+        score = sum(txt.count(t) for t in tokens)
+
+        if score > 0:
+            results.append({
+                "file": doc["file"],
+                "page": doc["page"],
+                "text": doc["text"],
+                "keyword_score": float(score)
+            })
+
+    results.sort(key=lambda x: x["keyword_score"], reverse=True)
+    return results[:top_k]
+
 def search_pdfs(query: str, top_k: int = 3):
     """
-    Default: if an embeddings engine is configured -> use it.
-    Else if internal embeddings available -> use that.
-    Else -> keyword page-count search.
+    Hybrid Retrieval:
+    - Runs vector search (if available)
+    - Runs keyword search
+    - Merges + deduplicates
+    - Applies weighted hybrid scoring
+    - Returns structured confidence results
     """
+
     if not query or not query.strip():
         return None
+
     if top_k <= 0:
         return None
 
+    # (Keep your existing external engine logic here)
     # (Keep your existing external engine logic here)
     if os.environ.get("LTA_USE_EMBEDDINGS") == "1" and _EMB_ENGINE_AVAILABLE:
         try:
@@ -222,7 +282,7 @@ def search_pdfs(query: str, top_k: int = 3):
             if emb_res:
                 return emb_res
         except Exception as e:
-            print(f"External Embeddings Engine Failed: {e}")
+            logger.error(f"External Embeddings Engine Failed: {e}")
 
     # Internal embeddings fallback
     if _USE_EMB and _EMB_AVAILABLE:
@@ -231,7 +291,9 @@ def search_pdfs(query: str, top_k: int = 3):
             return emb_res
 
     # (Keep your token-count fallback here)
+    # (Keep your token-count fallback here)
     if not _INDEX_LOADED:
+        index_pdfs()
         index_pdfs()
     if not _INDEX:
         return None

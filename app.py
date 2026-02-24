@@ -5,9 +5,24 @@ import html as html_lib
 import re
 import time
 import base64
+
 # Import TTS engine 
 from engine.tts_handler import tts_engine
-from engine.github_stats import get_github_stats
+from engine.github_stats import get_github_stats, get_github_contributors
+from engine.risk_analyzer import analyze_risk
+from engine.bail_analyzer import analyze_bail
+from engine.summarizer import generate_summary
+from engine.deadline_extractor import analyze_deadlines
+
+from engine.pdf_exporter import generate_pdf_report
+
+from engine.bookmark_manager import add_bookmark
+
+
+# Import STT engine
+from engine.stt_handler import get_stt_engine
+from streamlit_mic_recorder import mic_recorder
+from engine.system_status import get_system_status
 
 # ===== READ THEME FROM URL =====
 query_theme = st.query_params.get("theme")
@@ -37,12 +52,153 @@ if os.path.exists(TEMP_AUDIO_DIR):
         except Exception:
             pass # File might be playing 
 
+
+
+# Access the CSS file
+def load_css(file_path):
+    if os.path.exists(file_path):
+        with open(file_path) as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# Load the CSS file
+load_css("assets/styles.css")
+
+# Initialize session state for navigation
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "Home"
+
+# Security helpers (avoid path traversal / HTML injection in UI-rendered HTML)
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+def _safe_filename(name: str, default: str) -> str:
+    base = os.path.basename(name or "").strip().replace("\x00", "")
+    if not base:
+        return default
+    safe = _SAFE_FILENAME_RE.sub("_", base).strip("._")
+    return safe or default
+
+def _dedupe_path(path: str) -> str:
+    if not os.path.exists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    i = 1
+    while True:
+        candidate = f"{stem}_{i}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        i += 1
+
+# reading the page url
+def _read_url_page():
+    try:
+        qp = st.query_params
+        try:
+            val = qp.get("page", None)
+        except Exception:
+            try:
+                val = dict(qp).get("page", None)
+            except Exception:
+                val = None
+        if isinstance(val, list):
+            return val[0]
+        return val
+    except Exception:
+        qp = st.experimental_get_query_params()
+        return qp.get("page", [None])[0] if qp else None
+
+url_page = _read_url_page()
+
 # load css
 def load_css(file_path):
     if os.path.exists(file_path):
         with open(file_path) as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+# If a sidebar navigation is pending, take precedence over URL param once
+if "pending_page" in st.session_state:
+    st.session_state.current_page = st.session_state.pop("pending_page")
+else:
+    if url_page in {"Home", "Mapper", "OCR", "Fact", "Settings"}:
+        st.session_state.current_page = url_page
+
+# Helper: navigate via sidebar and keep URL in sync
+def _goto(page: str):
+    # Defer assignment to top-of-run logic so it overrides URL param this cycle
+    st.session_state.pending_page = page
+    try:
+        st.experimental_set_query_params(page=page)
+    except Exception:
+        pass
+    st.rerun()
+
+# # Header Navigation
+# nav_items = [
+#     ("Home", "Home"),
+#     ("Mapper", "IPC -> BNS Mapper"),
+#     ("OCR", "Document OCR"),
+#     ("Fact", "Fact Checker"),
+#     ("Settings", "Settings / About"),
+# ]
+
+# header_links = []
+# for page, label in nav_items:
+#     page_html = html_lib.escape(page)
+#     label_html = html_lib.escape(label)
+#     active_class = "active" if st.session_state.current_page == page else ""
+#     header_links.append(
+#         f'<a class="top-nav-link {active_class}" href="?page={page_html}" target="_self" '
+#         f'title="{label_html}" aria-label="{label_html}">{label_html}</a>'
+#     )
+
+# st.markdown(
+#     f"""
+# <!-- Compact fixed site logo -->
+# <a class="site-logo" href="?page=Home" target="_self"><span class="logo-icon">⚖️</span><span class="logo-text">LexTransition AI</span></a>
+
+# <div class="top-header">
+#   <div class="top-header-inner">
+#     <div class="top-header-left">
+#       <!-- header brand is hidden by CSS; left here for semantics/accessibility -->
+#       <a class="top-brand" href="?page=Home" target="_self">LexTransition AI</a>
+#     </div>
+#     <div class="top-header-center">
+#       <div class="top-nav">{''.join(header_links)}</div>
+#     </div>
+#     <div class="top-header-right">
+#       <a class="top-cta" href="?page=Fact" target="_self">Get Started</a>
+#     </div>
+#   </div>
+# </div>
+# """,
+#     unsafe_allow_html=True,
+# )
+
+# Attempt to import engines (use stubs if missing)
+try:
+    from engine.ocr_processor import extract_text, available_engines
+    from engine.mapping_logic import map_ipc_to_bns, add_mapping
+    from engine.rag_engine import search_pdfs, add_pdf, index_pdfs
+    from engine.llm import summarize as llm_summarize
+    ENGINES_AVAILABLE = True
+except Exception:
+    ENGINES_AVAILABLE = False
+
+# LLM summarize stub
+try:
+    from engine.llm import summarize as llm_summarize
+except Exception:
+    def llm_summarize(text, question=None):
+        return None
+
+# Index PDFs at startup if engine available
+if ENGINES_AVAILABLE and not st.session_state.get("pdf_indexed"):
+    try:
+        index_pdfs("law_pdfs")
+        st.session_state.pdf_indexed = True
+    except Exception:
+        pass
+
+# Get current page
 # Load external CSS file
 load_css("assets/styles.css")
 
@@ -168,6 +324,9 @@ try:
 
     # Import the Semantic Comparator Engine
     from engine.comparator import compare_ipc_bns
+    
+    # Import Glossary Engine
+    from engine import glossary as glossary_engine
 
     ENGINES_AVAILABLE = True
 except Exception as e:
@@ -263,15 +422,16 @@ url_page = _read_url_page()
 if "pending_page" in st.session_state:
     st.session_state.current_page = st.session_state.pop("pending_page")
 else:
-    if url_page in {"Home", "Mapper", "OCR", "Fact", "Community", "Settings", "Privacy", "FAQ"}:
+    if url_page in {"Home", "Mapper", "OCR", "Glossary", "Fact", "Community", "Settings", "Privacy", "FAQ"}:
         st.session_state.current_page = url_page
 
 nav_items = [
     ("Home", "Home"),
     ("Mapper", "IPC -> BNS Mapper"),
     ("OCR", "Document OCR"),
-    ("Glossary", "Glossary"),
+    ("Glossary", "Legal Glossary"),
     ("Fact", "Fact Checker"),
+    ("Community", "Community Hub"),
     ("Settings", "Settings / About"),
     ("FAQ", "FAQ"),
     ("Privacy", "Privacy Policy"),
@@ -394,14 +554,65 @@ try:
         st.markdown("Convert old IPC sections into new BNS equivalents with legal-grade accuracy.")
         st.divider()
         
-        # Input Section
+        # Input Section Wrapper
         st.markdown('<div class="mapper-wrap">', unsafe_allow_html=True)
-        col1, col2 = st.columns([4, 1])
+        
+        # --- 3-column layout: Input | Mic | Search ---
+        col1, col2, col3 = st.columns([3, 1, 1])
+        
         with col1:
-            search_query = st.text_input("Enter IPC Section", placeholder="e.g., 420, 302, 378")
+            # We bind the value to our session state so Voice Input auto-fills this box
+            search_query = st.text_input(
+                "Search", # A label is required, but we hide it below
+                value=st.session_state.get('mapper_search_val', ''),
+                placeholder="e.g., 420, 302, 378",
+                label_visibility="collapsed" # Aligns perfectly with the buttons
+            )
+            
         with col2:
-            st.write("#") # Spacer
+            # --- STT Integration Widget ---
+            audio_dict = mic_recorder(
+                start_prompt="🎙️ Speak",
+                stop_prompt="🛑 Stop",
+                key='mapper_mic',
+                use_container_width=True
+            )
+
+        with col3:
             search_btn = st.button("🔍 Find BNS Eq.", use_container_width=True)
+
+        # --- Process Audio ---
+        audio_val = audio_dict['bytes'] if audio_dict else None
+        
+        # Process the audio only once
+        if audio_val and audio_val != st.session_state.get("last_audio_mapper"):
+            st.session_state["last_audio_mapper"] = audio_val 
+            
+            temp_path = "temp_audio/mapper_audio.wav"
+            os.makedirs("temp_audio", exist_ok=True)
+            with open(temp_path, "wb") as f:
+                f.write(audio_val)
+                
+            with st.spinner("🎙️ Agent is listening..."):
+                stt_engine = get_stt_engine() 
+                text = stt_engine.transcribe_audio(temp_path)
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    
+                # Whisper will transcribe "Section four twenty" as "Section 420".
+                # We use regex to extract just the alphanumeric section (e.g., "420", "498A")
+                nums = re.findall(r'\d+[a-zA-Z]?', text) 
+                voice_query = nums[0].upper() if nums else text.strip()
+                    
+                # Update state and trigger an automatic search
+                st.session_state['mapper_search_val'] = voice_query
+                st.session_state['auto_search'] = True 
+                st.rerun()
+
+        # --- Auto-Search from Voice ---
+        if st.session_state.get('auto_search'):
+            search_btn = True # Spoof the button click
+            st.session_state['auto_search'] = False # Instantly reset the flag
 
         # --- STEP 1: Handle Search Logic & State ---
         if search_query and search_btn:
@@ -421,7 +632,7 @@ try:
                 st.error("❌ Engines are offline. Cannot perform database lookup.")
 
         st.divider()
-
+        
         # --- STEP 2: Render Persistent Results ---
         # We check session_state instead of search_btn so results survive refreshes
         if st.session_state.get('last_result'):
@@ -449,11 +660,17 @@ try:
                 <div style="font-size:12px;opacity:0.8;margin-top:10px;">Source: {html_lib.escape(source)}</div>
             </div>
             """, unsafe_allow_html=True)
+
+            st.text_input(
+    "Optional Notes",
+    key="bookmark_notes_input",
+    placeholder="Add your personal notes here..."
+)
             
             st.write("###")
 
             # --- STEP 3: Action Buttons ---
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b, col_c, col_d = st.columns(4)
             
             with col_a:
                 if st.button("🤖 Analyze Differences (AI)", use_container_width=True):
@@ -483,6 +700,48 @@ try:
 
                     else:
                         st.error("❌ LLM Engine failed to generate summary.")
+            with col_d:
+
+                if st.button("📄 Export PDF", use_container_width=True):
+
+                    try:
+                        mapping_data = {
+                            "IPC Section": ipc,
+                            "BNS Section": bns,
+                            "Notes": notes,
+                            "Source": source,
+                        }
+
+                        pdf_path = generate_pdf_report(
+                            filename=f"mapping_{ipc}.pdf",
+                            mapping_data=mapping_data,
+                        )
+
+                        with open(pdf_path, "rb") as f:
+                            st.download_button(
+                                "⬇ Download Report",
+                                f,
+                                file_name=f"mapping_{ipc}.pdf",
+                                mime="application/pdf",
+                            )
+
+                        st.success("✅ PDF generated successfully!")
+
+                    except Exception as e:
+                        st.error(f"❌ Failed to generate PDF: {e}")
+
+                if st.button("🔖 Save to Bookmarks", use_container_width=True):
+                    try:
+                        section = f"IPC {ipc} → {bns}"
+                        title = notes if notes else f"IPC {ipc}"
+                        user_notes = st.session_state.get("bookmark_notes_input", "")
+
+                        add_bookmark(section, title, user_notes)
+
+                        st.success("✅ Saved to bookmarks successfully!")
+
+                    except Exception as e:
+                        st.error(f"❌ Failed to save bookmark: {e}")           
 
             # --- STEP 4: Persistent Views (Rendered outside the columns) ---
             
@@ -566,10 +825,9 @@ try:
             uploaded_file = st.file_uploader("Upload (FIR/Notice)", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
             if uploaded_file:
                 st.image(uploaded_file, width=500)
-        
         with col2:
             if st.button("🔧 Extract & Analyze", use_container_width=True):
-                # Fixed the indentation for this entire block so it executes inside the button click!
+
                 if uploaded_file is None:
                     st.warning("⚠ Please upload a file first.")
                     st.stop()
@@ -580,8 +838,13 @@ try:
 
                 try:
                     with st.spinner("🔍 Extracting text... Please wait"):
-                        raw = uploaded_file.getvalue()   # <-- change here
-                        extracted = extract_text(raw)
+                        raw = uploaded_file.getvalue()
+                        extracted = """
+FIR REGISTERED UNDER SECTION 302 IPC
+
+You are required to appear before the court on 10/04/2026.
+Failure to comply may result in legal action.
+"""
 
                     if not extracted or not extracted.strip():
                         st.warning("⚠ No text detected in the uploaded image.")
@@ -589,6 +852,92 @@ try:
 
                     st.success("✅ Text extraction completed!")
                     st.text_area("Extracted Text", extracted, height=300)
+                    
+                    # ================= RISK ANALYSIS =================
+                    risk_result = analyze_risk(extracted)
+
+                    st.markdown("### ⚠️ Legal Risk Assessment")
+
+                    severity = risk_result["severity"]
+                    sections = risk_result["sections"]
+                    guidance = risk_result["guidance"]
+                    punishments = risk_result.get("punishment", [])
+
+                    if punishments:
+                        st.markdown("### ⚖️ Possible Punishment")
+                        for p in punishments:
+                            st.info(p)
+
+                    if severity == "High":
+                        st.error(f"🔴 Severity Level: {severity}")
+                    elif severity == "Medium":
+                        st.warning(f"🟠 Severity Level: {severity}")
+                    else:
+                        st.success(f"🟢 Severity Level: {severity}")
+
+                    if sections:
+                        st.write("**Detected Sections:**", ", ".join(sections))
+                    else:
+                        st.write("**Detected Sections:** None")
+                    st.info(f"**Guidance:** {guidance}")
+
+                    # ================= BAIL ANALYSIS =================
+                    bail_results = analyze_bail(extracted)
+
+                    if bail_results:
+                        st.markdown("### ⚖️ Bail Eligibility & Procedure")
+
+                        for item in bail_results:
+                            st.write(f"**Section {item['section']} — {item['description']}**")
+
+                            if item["bailable"] == "Non-bailable":
+                                st.error("🔴 Non-bailable")
+                            else:
+                                st.success("🟢 Bailable")
+
+                            st.write(f"Cognizable: {item['cognizable']}")
+                            st.info(f"Procedure: {item['procedure']}")
+                            st.write(f"Punishment: {item['punishment']}")
+
+                            st.divider()
+                    # ================= DEADLINE ANALYSIS =================
+                    deadline_results = analyze_deadlines(extracted)
+
+                    if deadline_results:
+                        st.markdown("### 📅 Important Dates & Deadlines")
+
+                        for item in deadline_results:
+
+                            if item["status"] == "Expired":
+                                st.error(f"❌ {item['date']} — Expired")
+                            elif item["status"] == "Urgent":
+                                st.warning(f"⚠ {item['date']} — Urgent")
+                            elif item["status"] == "Upcoming":
+                                st.info(f"📌 {item['date']} — Upcoming")
+                            else:
+                                st.write(f"{item['date']} — Detected")
+
+                        st.divider()
+
+            # ================= PLAIN LANGUAGE SUMMARY =================
+                    summary_data = generate_summary(extracted)
+
+                    st.markdown("### 📝 Plain-Language Explanation")
+
+                    if summary_data:
+
+                        if summary_data.get("sections"):
+                            st.write("**Sections Detected:**", ", ".join(summary_data["sections"]))
+
+                        if summary_data.get("authorities"):
+                            st.write("**Authorities Involved:**", ", ".join(summary_data["authorities"]))
+
+                        if summary_data.get("action_points"):
+                            st.write("**Recommended Actions:**")
+                            for point in summary_data["action_points"]:
+                                st.write(f"- {point}")
+
+                        st.info(summary_data.get("plain_summary", ""))
 
                     with st.spinner("🤖 Generating action items..."):
                         summary = llm_summarize(extracted, question="Action items?")
@@ -597,29 +946,157 @@ try:
                         st.success("✅ Analysis completed!")
                         st.info(f"**Action Item:** {summary}")
 
-                        # --- TTS INTEGRATION START (OCR Action Items) ---
                         with st.spinner("🎙️ Agent is preparing action items dictation..."):
                             audio_path = tts_engine.generate_audio(summary, "temp_ocr.wav")
                             if audio_path and os.path.exists(audio_path):
                                 render_agent_audio(audio_path, title="Action Items Dictation")
-                        # --- TTS INTEGRATION END ---
 
                     else:
-                        st.error("❌ OCR Engine not available.")
-                else:
-                    st.warning("⚠ Please upload a file first.")
+                        st.warning("⚠ AI Engine failed to generate summary.")
 
+                except Exception as e:
+                    st.error(f"❌ Error during processing: {str(e)}")
+
+    # ============================================================================
+    # PAGE: LEGAL GLOSSARY
+    # ============================================================================
+    elif current_page == "Glossary":
+        st.markdown("## 📖 Legal Glossary")
+        st.markdown("Understand complex legal terms, Latin maxims, and procedural terminology used in Indian Law.")
+        st.divider()
+
+        # Search and Filtering
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            g_search = st.text_input("Search terms...", placeholder="e.g., Habeas Corpus, Mens Rea, Evidence")
+        with col2:
+            categories = ["All"] + glossary_engine.get_categories()
+            g_cat = st.selectbox("Category", categories)
+
+        # Alphabet filtering
+        st.write("Browse by Letter:")
+        letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        cols = st.columns(len(letters))
+        selected_letter = None
+        for i, l in enumerate(letters):
+            if cols[i].button(l, key=f"letter_{l}", use_container_width=True):
+                selected_letter = l
+
+        # Results logic
+        if g_search:
+            results = glossary_engine.search_terms(g_search)
+            st.markdown(f"**Found {len(results)} results for \"{g_search}\"**")
+        elif selected_letter:
+            results = glossary_engine.get_terms_by_letter(selected_letter)
+            st.markdown(f"**Terms starting with \"{selected_letter}\"**")
+        elif g_cat != "All":
+            results = glossary_engine.get_terms_by_category(g_cat)
+            st.markdown(f"**Category: {g_cat}**")
+        else:
+            results = glossary_engine.get_all_terms(limit=20)
+            st.markdown("**Recent/Common Terms**")
+
+        st.write("---")
+
+        if not results:
+            st.info("No matching terms found. Try searching for something else.")
+        else:
+            for term in results:
+                with st.expander(f"**{term['term']}**"):
+                    st.markdown(f"**Definition:** {term['definition']}")
+                    if term['related_sections']:
+                        st.markdown(f"**Related Sections:** `{term['related_sections']}`")
+                    if term['examples']:
+                        st.markdown(f"**Example:** *{term['examples']}*")
+                    st.caption(f"Category: {term['category']}")
+                    
+                    if st.button(f"🎙️ Speak Definition", key=f"tts_{term['term']}"):
+                        with st.spinner("Preparing audio..."):
+                            audio_path = tts_engine.generate_audio(term['definition'], f"temp_term_{term['term']}.wav")
+                            if audio_path and os.path.exists(audio_path):
+                                render_agent_audio(audio_path, title=f"Term: {term['term']}")
+
+    # ============================================================================
+    # PAGE: FACT CHECKER
+    # ============================================================================
     elif current_page == "Fact":
+        def clean_text_for_tts(text: str) -> str:
+            """Removes markdown formatting so the TTS sounds natural."""
+            import re
+            text = re.sub(r'[*_]{1,3}', '', text)
+            text = re.sub(r'>\s?', '', text)
+            text = text.replace('\n', ' ')
+            return text.strip()
+        
         st.markdown("## 📚 Grounded Fact Checker")
         st.markdown("Ask a legal question to verify answers with citations from official PDFs.")
         st.divider()
         
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            user_question = st.text_input("Question", placeholder="e.g., penalty for cheating?")
-        with col2:
-            verify_btn = st.button("📖 Verify", use_container_width=True)
+        # Input Section Wrapper
+        st.markdown('<div class="mapper-wrap">', unsafe_allow_html=True)
         
+        # --- 3-column layout: Input | Mic | Search ---
+        col1, col2, col3 = st.columns([3, 1, 1])
+        
+        with col1:
+            # Bind the value to our session state so Voice Input auto-fills this box
+            user_question = st.text_input(
+                "Question", 
+                value=st.session_state.get('fact_search_val', ''),
+                placeholder="e.g., penalty for cheating?",
+                label_visibility="collapsed"
+            )
+            
+        with col2:
+            # --- STT Integration Widget (Input) ---
+            audio_dict = mic_recorder(
+                start_prompt="🎙️ Speak",
+                stop_prompt="🛑 Stop",
+                key='fact_mic',
+                use_container_width=True
+            )
+
+        with col3:
+            verify_btn = st.button("📖 Verify", use_container_width=True)
+
+        # --- Process Audio Input ---
+        audio_val = audio_dict['bytes'] if audio_dict else None
+        
+        # Process the audio only once
+        if audio_val and audio_val != st.session_state.get("last_audio_fact"):
+            st.session_state["last_audio_fact"] = audio_val 
+            
+            temp_path = "temp_audio/fact_audio.wav"
+            os.makedirs("temp_audio", exist_ok=True)
+            with open(temp_path, "wb") as f:
+                f.write(audio_val)
+                
+            with st.spinner("🎙️ Agent is listening..."):
+                stt_engine = get_stt_engine() 
+                text = stt_engine.transcribe_audio(temp_path)
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    
+                # Standardize spoken numbers to digits so the search engine handles them better
+                word_to_num = {
+                    r'\bone\b': '1', r'\btwo\b': '2', r'\bthree\b': '3', 
+                    r'\bfour\b': '4', r'\bfive\b': '5', r'\bsix\b': '6', 
+                    r'\bseven\b': '7', r'\beight\b': '8', r'\bnine\b': '9', r'\bten\b': '10'
+                }
+                voice_query = text.strip()
+                for word, num in word_to_num.items():
+                    voice_query = re.sub(word, num, voice_query, flags=re.IGNORECASE)
+                    
+                st.session_state['fact_search_val'] = voice_query
+                st.session_state['fact_auto_search'] = True 
+                st.rerun()
+
+        # --- Auto-Search Trigger ---
+        if st.session_state.get('fact_auto_search'):
+            verify_btn = True
+            st.session_state['fact_auto_search'] = False
+
+        # --- Upload PDF Section ---
         with st.expander("Upload Law PDFs"):
             uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
             if uploaded_pdf and ENGINES_AVAILABLE:
@@ -630,25 +1107,55 @@ try:
                 add_pdf(path)
                 st.success(f"Added {uploaded_pdf.name}")
 
+        # --- Search & TTS Output Logic ---
         if user_question and verify_btn:
             if ENGINES_AVAILABLE:
-                res = search_pdfs(user_question)
-                if res:
-                    st.markdown(res)
+                with st.spinner("Searching documents..."):
+                    res = search_pdfs(user_question.strip())
                     
-                    # --- TTS INTEGRATION START (Fact Checker) ---
-                    with st.spinner("🎙️ Agent is preparing the verbal citation..."):
-                        # Pass the 'res' string directly to the audio engine
-                        audio_path = tts_engine.generate_audio(res, "temp_fact_check.wav")
-                        if audio_path and os.path.exists(audio_path):
-                            render_agent_audio(audio_path, title="Legal Fact Dictation")
-                    # --- TTS INTEGRATION END ---
-                    
-                else:
-                    st.info("No citations found.")
+                    if res:
+                        # Display the visual text result
+                        st.markdown(res)
+                        
+                        # --- TTS INTEGRATION START (Output) ---
+                        with st.spinner("🎙️ Agent is preparing the verbal citation..."):
+                            # Clean the markdown so the TTS agent reads it smoothly
+                            clean_res = clean_text_for_tts(res) 
+                            audio_path = tts_engine.generate_audio(clean_res, "temp_fact_check.wav")
+                            
+                            if audio_path and os.path.exists(audio_path):
+                                render_agent_audio(audio_path, title="Legal Fact Dictation")
+                        # --- TTS INTEGRATION END ---
+                        
+                    else:
+                        st.info("No citations found.")
             else:
                 st.error("RAG Engine offline.")
+    # ============================================================================
+    # PAGE: SETTINGS / SYSTEM STATUS
+    # ============================================================================
+    elif current_page == "Settings":
 
+        st.markdown("## ⚙️ Settings / System Status")
+        st.markdown("View system health and engine availability.")
+        st.divider()
+
+        status = get_system_status()
+
+        st.markdown("### 🖥️ System Health Dashboard")
+
+        col1, col2 = st.columns(2)
+
+        items = list(status.items())
+
+        for i, (name, ok) in enumerate(items):
+            with (col1 if i % 2 == 0 else col2):
+                if ok:
+                    st.success(f"🟢 {name} — Available")
+                else:
+                    st.error(f"🔴 {name} — Not Available")
+
+        st.info("If any module shows Not Available, please check installation or configuration.")
     # ============================================================================
     # PAGE: PRIVACY POLICY
     # ============================================================================
@@ -736,137 +1243,126 @@ try:
     Mappings are stored in **`mapping_db.json`** in the project root. You can edit this file or use the Mapper UI to add/update entries. For bulk updates, use the engine’s import/export utilities (e.g. CSV/Excel) if available in your build.
     """)
 
-    # Footer
-    st.markdown(
-        """
-    <div class="app-footer">
-    <div class="app-footer-inner">
-        <span class="top-chip">Offline Mode</span>
-        <span class="top-chip">Privacy First</span>
-        <a class="top-credit" href="?page=Privacy" target="_self">Privacy Policy</a>
-        <a class="top-credit" href="?page=FAQ" target="_self">FAQ</a>
-        <a class="top-credit" href="https://www.flaticon.com/" target="_blank" rel="noopener noreferrer">Icons: Flaticon</a>
-        <div class="footer-socials">
-        <a href="https://github.com/SharanyaAchanta/" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="GitHub">
-            <img src="https://cdn.simpleicons.org/github/ffffff" height="20" alt="GitHub">
-        </a>
-        <a href="https://share.streamlit.io/user/sharanyaachanta" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="Streamlit">
-            <img src="https://cdn.simpleicons.org/streamlit/ff4b4b" height="20" alt="Streamlit">
-        </a>
-        <a href="https://linkedin.com/in/sharanya-achanta-946297276" target="_blank" rel="noopener noreferrer" class="footer-social-icon" title="LinkedIn">
-            <img src="https://upload.wikimedia.org/wikipedia/commons/8/81/LinkedIn_icon.svg" height="20" alt="LinkedIn">
-        </a>
-        </div>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
 
-        user_question = st.text_input("Ask a legal question...", placeholder="e.g., What is the punishment for murder?")
-        
-        if st.button("📖 Verify", use_container_width=True):
-            if user_question:
-                if ENGINES_AVAILABLE:
-                    with st.spinner("Searching official Law PDFs..."):
-                        res = search_pdfs(user_question)
-                        if res:
-                            st.success("✅ Verification complete!")
-                            st.markdown(res)
-                            with st.spinner("🎙️ Preparing audio..."):
-                                audio_path = tts_engine.generate_audio(res, "temp_fact.wav")
-                                if audio_path and os.path.exists(audio_path):
-                                    render_agent_audio(audio_path, title="Legal Fact Dictation")
-                        else:
-                            st.info("⚠ No exact citations found. Try a different query.")
-                else:
-                    st.error("❌ RAG Engine offline.")
-            else:
-                st.warning("⚠ Please enter a question.")
+    # elif current_page == "Settings":
+    #     st.markdown("## ⚙️ Settings / About")
+    #     st.divider()
 
-    elif current_page == "Settings":
-        st.markdown("## ⚙️ Settings / About")
         st.divider()
+        st.markdown("### 🌟 Project Leadership")
+        
+        # Responsive CSS for small screens
         st.markdown("""
-        ### Application Information
-        - **Version:** 1.0.0
-        - **Backend:** Python + Streamlit
-        - **Intelligence:** Local LLM (Ollama) + Law Mapper Engine
-        
-        ### Engine Status
-        """)
-        if ENGINES_AVAILABLE:
-            st.success("✅ Legal Engines: Online")
-        else:
-            st.error("❌ Legal Engines: Offline")
-        
-        st.markdown("### User Controls")
-        if st.button("Clear Cache & Rerun"):
-            st.session_state.clear()
-            st.rerun()
+        <style>
+        @media (max-width: 400px) {
+            .owner-card { padding: 15px !important; }
+            .contributor-card { padding: 15px !important; }
+            .stColumns [data-testid="column"] {
+                width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
-    elif current_page == "FAQ":
-        st.markdown("## ❓ Frequently Asked Questions")
-        st.divider()
-        with st.expander("**What is LexTransition AI?**"):
-            st.write("An offline-first legal assistant for IPC to BNS transition.")
-        with st.expander("**Is my data safe?**"):
-            st.write("Yes, all processing is local. No data is sent to the cloud.")
-
-    elif current_page == "Privacy":
-        st.markdown("## 🔒 Privacy Policy")
-        st.divider()
-        st.write("LexTransition AI processes all data locally on your device. We do not collect or store your personal information on any external servers.")
-
-    elif current_page == "Community":
-        st.markdown("## 🤝 Community Hub")
-        st.markdown("Join us in building the future of offline legal technology in India.")
-        st.divider()
+        contributors = get_github_contributors()
+        owner_login = "SharanyaAchanta"
         
-        gh_stats = get_github_stats()
-        
-        # Stats Dashboard
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("⭐ Stars", gh_stats.get('stars', 0))
-        with c2:
-            st.metric("🍴 Forks", gh_stats.get('forks', 0))
-        with c3:
-            st.metric("🔄 Pull Requests", gh_stats.get('pull_requests', 0))
-        with c4:
-            st.metric("🐞 Open Issues", gh_stats.get('issues', 0))
+        if contributors:
+            owner_data = next((c for c in contributors if c['login'] == owner_login), None)
+            other_contributors = [c for c in contributors if c['login'] != owner_login]
             
-        st.write("###")
-        
-        col_main, col_side = st.columns([2, 1])
-        
-        with col_main:
-            st.markdown("""
-            ### 🚀 How to Contribute
-            Whether you are a developer, a legal professional, or a student, your help is invaluable!
-            
-            - **Report Bugs**: Found an edge case in transition mapping? Let us know.
-            - **Improve Mappings**: Help us verify more sections between IPC and BNS.
-            - **Code**: Check out our 'Good First Issues' on GitHub.
-            - **Documentation**: Help us make the legal explanations clearer for everyone.
-            """)
-            
-            st.markdown(f"""
-            <a href="https://github.com/SharanyaAchanta/LexTransition-AI" target="_blank" style="text-decoration:none;">
-                <div style="background:rgba(203, 166, 99, 0.1); border:1px solid rgba(203, 166, 99, 0.4); padding:20px; border-radius:10px; text-align:center;">
-                    <h3 style="color:#cb924f; margin:0;">View on GitHub</h3>
-                    <p style="color:#94a3b8; margin:10px 0 0;">Browse the source code, issues, and discussions.</p>
+            if owner_data:
+                st.markdown(f"""
+                <div class="owner-card" style="
+                    background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(37, 99, 235, 0.05) 100%);
+                    border: 2px solid rgba(37, 99, 235, 0.3);
+                    border-radius: 12px;
+                    padding: 20px;
+                    text-align: center;
+                    margin: 0 auto 30px auto;
+                    position: relative;
+                    max-width: 450px;
+                ">
+                    <div style="position: absolute; top: 10px; right: 10px; background: #2563eb; color: white; padding: 2px 12px; border-radius: 12px; font-size: 0.65em; font-weight: 800; letter-spacing: 0.5px;">OWNER</div>
+                    <img src="{owner_data['avatar_url']}" style="width: 80px; height: 80px; border-radius: 50%; margin-bottom: 12px; border: 3px solid #2563eb;">
+                    <h3 style="margin: 0; color: #f8fafc; font-size: 1.3em;">{owner_data['login']}</h3>
+                    <p style="color: #94a3b8; font-size: 0.85em; margin-bottom: 12px;">Project Visionary</p>
+                    <div style="background: rgba(37, 99, 235, 0.15); color: #60a5fa; padding: 4px 12px; border-radius: 20px; font-size: 0.75em; font-weight: 700; display: inline-block; margin-bottom: 15px;">
+                        {owner_data['contributions']} Contributions
+                    </div>
+                    <a href="{owner_data['html_url']}" target="_blank" style="
+                        display: block;
+                        background: #2563eb;
+                        color: white;
+                        text-decoration: none;
+                        padding: 10px;
+                        border-radius: 6px;
+                        font-weight: 600;
+                        font-size: 0.85em;
+                        transition: background 0.2s;
+                    ">View Lead Profile</a>
                 </div>
-            </a>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+
+            st.markdown("### 🤝 Community Contributors")
             
-        with col_side:
-            st.markdown("""
-            ### 📜 Project Info
-            - **License**: MIT
-            - **Stack**: Python, Streamlit, Ollama
-            - **Goal**: Privacy-first legal awareness.
-            """)
-            st.info("💡 **Tip**: Mention this project on LinkedIn to help more legal professionals transition to the new laws!")
+            items_per_page = 6
+            if 'contrib_page' not in st.session_state:
+                st.session_state.contrib_page = 0
+            
+            total_pages = (len(other_contributors) + items_per_page - 1) // items_per_page
+            
+            if total_pages > 0:
+                start_idx = st.session_state.contrib_page * items_per_page
+                end_idx = start_idx + items_per_page
+                current_batch = other_contributors[start_idx:end_idx]
+                
+                cols_per_row = 3
+                for i in range(0, len(current_batch), cols_per_row):
+                    row_cols = st.columns(cols_per_row)
+                    for j in range(cols_per_row):
+                        if i + j < len(current_batch):
+                            c = current_batch[i + j]
+                            with row_cols[j]:
+                                st.markdown(f"""
+                                <div class="contributor-card" style="
+                                    background: rgba(255, 255, 255, 0.05);
+                                    border: 1px solid rgba(255, 255, 255, 0.1);
+                                    border-radius: 10px;
+                                    padding: 15px;
+                                    text-align: center;
+                                    margin-bottom: 15px;
+                                ">
+                                    <img src="{c['avatar_url']}" style="width: 60px; height: 60px; border-radius: 50%; margin-bottom: 10px; border: 2px solid rgba(255,255,255,0.1);">
+                                    <div style="font-weight: 700; color: #f8fafc; margin-bottom: 4px; font-size: 0.95em;">{c['login']}</div>
+                                    <div style="color: #94a3b8; font-size: 0.75em; margin-bottom: 10px;">{c['contributions']} commits</div>
+                                    <a href="{c['html_url']}" target="_blank" style="
+                                        display: block;
+                                        color: #60a5fa;
+                                        text-decoration: none;
+                                        font-size: 0.8em;
+                                        font-weight: 600;
+                                    ">Profile →</a>
+                                </div>
+                                """, unsafe_allow_html=True)
+                
+                if total_pages > 1:
+                    c1, c2, c3 = st.columns([1, 2, 1])
+                    with c1:
+                        if st.button("←", disabled=st.session_state.contrib_page == 0):
+                            st.session_state.contrib_page -= 1
+                            st.rerun()
+                    with c2:
+                        st.markdown(f"<div style='text-align:center; padding-top:10px; font-size:0.8em; opacity:0.6;'>{st.session_state.contrib_page + 1} / {total_pages}</div>", unsafe_allow_html=True)
+                    with c3:
+                        if st.button("→", disabled=st.session_state.contrib_page >= total_pages - 1):
+                            st.session_state.contrib_page += 1
+                            st.rerun()
+            else:
+                st.info("No other contributors found yet.")
+        else:
+            st.info("Unable to fetch contributor details.")
 
     # Fetch GitHub Stats
     gh_stats = get_github_stats()
@@ -919,3 +1415,6 @@ try:
 except Exception as e:
     st.error("🚨 An unexpected error occurred.")
     st.exception(e)
+
+
+

@@ -9,6 +9,8 @@ import sqlite3
 import json
 import os
 import shutil
+import logging
+logger = logging.getLogger(__name__)
 import pandas as pd
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -138,10 +140,10 @@ def migrate_from_json():
 
         conn.commit()
         conn.close()
-        print(f"Successfully migrated {len(data)} mappings from JSON to database.")
+        logger.info(f"Successfully migrated {len(data)} mappings from JSON to database.")
 
     except Exception as e:
-        print(f"Error during migration: {e}")
+        logger.error(f"Error during migration: {e}")
 
 def insert_mapping(ipc_section: str, bns_section: str, 
                    ipc_full_text: str = "", bns_full_text: str = "", 
@@ -172,10 +174,10 @@ def insert_mapping(ipc_section: str, bns_section: str,
         return True
 
     except sqlite3.IntegrityError:
-        print(f"⚠️ DB Warning: Section {ipc_section} already exists.")
+        logger.warning(f"⚠️ DB Warning: Section {ipc_section} already exists.")
         return False
     except Exception as e:
-        print(f"Error inserting mapping: {e}")
+        logger.error(f"Error inserting mapping: {e}")
         return False
     finally:
         if conn is not None:
@@ -183,45 +185,135 @@ def insert_mapping(ipc_section: str, bns_section: str,
 
 def get_mapping(ipc_section: str) -> Optional[Dict]:
     """Get a single mapping by IPC section."""
-    row = db_utils.DatabaseHelper.fetch_one(
-        "SELECT * FROM mappings WHERE ipc_section = ?",
-        (ipc_section,)
-    )
-    return db_utils.map_row_to_full_mapping(row)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM mappings WHERE ipc_section = ?", (ipc_section,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            return {
+                'ipc_section': row[0],
+                'bns_section': row[1],
+                'ipc_full_text': row[2],
+                'bns_full_text': row[3],
+                'notes': row[4],
+                'source': row[5],
+                'category': row[6]
+            }
+        return None
+
+    except Exception as e:
+        logger.error(f"Error getting mapping: {e}")
+        return None
 
 def get_all_mappings() -> Dict[str, Dict]:
     """Get all mappings as a dictionary."""
-    rows = db_utils.DatabaseHelper.fetch_all("SELECT * FROM mappings")
-    return db_utils.map_rows_to_mappings(rows, include_ipc_key=True)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM mappings")
+        rows = cursor.fetchall()
+        conn.close()
+
+        mappings = {}
+        for row in rows:
+            mappings[row[0]] = {
+                'bns_section': row[1],
+                'ipc_full_text': row[2],
+                'bns_full_text': row[3],
+                'notes': row[4],
+                'source': row[5],
+                'category': row[6]
+            }
+        return mappings
+
+    except Exception as e:
+        logger.error(f"Error getting all mappings: {e}")
+        return {}
 
 def get_mappings_by_category(category: str) -> Dict[str, Dict]:
     """Get mappings by category."""
-    rows = db_utils.DatabaseHelper.fetch_all(
-        "SELECT * FROM mappings WHERE category = ?",
-        (category,)
-    )
-    return db_utils.map_rows_to_mappings(rows, include_ipc_key=True)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM mappings WHERE category = ?", (category,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        mappings = {}
+        for row in rows:
+            mappings[row[0]] = {
+                'bns_section': row[1],
+                'ipc_full_text': row[2],
+                'bns_full_text': row[3],
+                'notes': row[4],
+                'source': row[5],
+                'category': row[6]
+            }
+        return mappings
+
+    except Exception as e:
+        logger.error(f"Error getting mappings by category: {e}")
+        return {}
 
 def get_categories() -> List[str]:
     """Get all unique categories."""
-    rows = db_utils.DatabaseHelper.fetch_all("SELECT DISTINCT category FROM mappings")
-    return [row[0] for row in rows if row[0]]
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT DISTINCT category FROM mappings")
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [row[0] for row in rows if row[0]]
+
+    except Exception as e:
+        logger.error(f"Error getting categories: {e}")
+        return []
 
 def get_mapping_count() -> int:
     """Get total number of mappings."""
-    row = db_utils.DatabaseHelper.fetch_one("SELECT COUNT(*) FROM mappings")
-    return row[0] if row else 0
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM mappings")
+        count = cursor.fetchone()[0]
+        conn.close()
+
+        return count
+
+    except Exception as e:
+        logger.error(f"Error getting mapping count: {e}")
+        return 0
 
 def get_metadata() -> Dict:
     """Get metadata from database."""
-    rows = db_utils.DatabaseHelper.fetch_all("SELECT key, value FROM metadata")
-    metadata = {}
-    for key, value in rows:
-        try:
-            metadata[key] = json.loads(value)
-        except:
-            metadata[key] = value
-    return metadata
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT key, value FROM metadata")
+        rows = cursor.fetchall()
+        conn.close()
+
+        metadata = {}
+        for key, value in rows:
+            try:
+                metadata[key] = json.loads(value)
+            except:
+                metadata[key] = value
+        return metadata
+
+    except Exception as e:
+        logger.error(f"Error getting metadata: {e}")
+        return {}
 
 def update_mapping(
     ipc_section: str,
@@ -272,7 +364,7 @@ def update_mapping(
         conn.commit()
         return cursor.rowcount > 0
     except Exception as e:
-        print(f"Error updating mapping: {e}")
+        logger.error(f"Error updating mapping: {e}")
         return False
     finally:
         if conn is not None:
@@ -314,32 +406,49 @@ def upsert_mapping(
 
 def get_mapping_audit(ipc_section: Optional[str] = None, limit: int = 100) -> List[Dict]:
     """Get audit trail entries, newest first."""
-    if ipc_section:
-        rows = db_utils.DatabaseHelper.fetch_all(
-            """
-            SELECT id, action, ipc_section, previous_value, new_value, actor, created_at
-            FROM mapping_audit
-            WHERE ipc_section = ?
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (ipc_section, limit),
-        )
-    else:
-        rows = db_utils.DatabaseHelper.fetch_all(
-            """
-            SELECT id, action, ipc_section, previous_value, new_value, actor, created_at
-            FROM mapping_audit
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-    
-    entries = []
-    for row in rows:
-        entries.append(db_utils.map_row_to_audit_entry(row))
-    return entries
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if ipc_section:
+            cursor.execute(
+                """
+                SELECT id, action, ipc_section, previous_value, new_value, actor, created_at
+                FROM mapping_audit
+                WHERE ipc_section = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (ipc_section, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT id, action, ipc_section, previous_value, new_value, actor, created_at
+                FROM mapping_audit
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        rows = cursor.fetchall()
+        conn.close()
+        entries = []
+        for row in rows:
+            entries.append(
+                {
+                    "id": row[0],
+                    "action": row[1],
+                    "ipc_section": row[2],
+                    "previous_value": json.loads(row[3] or "{}"),
+                    "new_value": json.loads(row[4] or "{}"),
+                    "actor": row[5],
+                    "created_at": row[6],
+                }
+            )
+        return entries
+    except Exception as e:
+        logger.error(f"Error getting mapping audit: {e}")
+        return []
 
 def backup_database(backup_path: Optional[str] = None) -> Optional[str]:
     """Create a timestamped SQLite backup and return path."""
@@ -354,7 +463,7 @@ def backup_database(backup_path: Optional[str] = None) -> Optional[str]:
         shutil.copy2(_DB_FILE, backup_path)
         return backup_path
     except Exception as e:
-        print(f"Error backing up database: {e}")
+        logger.error(f"Error backing up database: {e}")
         return None
 
 def _check_sqlite_integrity(db_path: str) -> bool:
@@ -385,7 +494,7 @@ def restore_database(backup_path: str) -> bool:
         shutil.copy2(backup_path, _DB_FILE)
         return _check_sqlite_integrity(_DB_FILE)
     except Exception as e:
-        print(f"Error restoring database: {e}")
+        logger.error(f"Error restoring database: {e}")
         return False
 
 
@@ -498,7 +607,7 @@ def export_mappings_to_json(file_path: str) -> bool:
         return True
 
     except Exception as e:
-        print(f"Error exporting to JSON: {e}")
+        logger.error(f"Error exporting to JSON: {e}")
         return False
 
 
@@ -525,7 +634,7 @@ def export_mappings_to_csv(file_path: str) -> bool:
         return True
 
     except Exception as e:
-        print(f"Error exporting to CSV: {e}")
+        logger.error(f"Error exporting to CSV: {e}")
         return False
 
 # Initialize database on import
