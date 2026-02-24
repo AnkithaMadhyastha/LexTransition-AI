@@ -18,10 +18,15 @@ from engine.db import (
     import_mappings_from_csv,
     import_mappings_from_excel,
 )
-
+from engine.history_manager import (
+    add_history,
+    view_history,
+    clear_history,
+)
 
 def _cmd_map(args: argparse.Namespace) -> int:
     result = map_ipc_to_bns(args.ipc_section)
+    add_history(args.ipc_section, result)
     if not result:
         logger.info("No mapping found")
         return 1
@@ -80,6 +85,22 @@ def _cmd_bookmark_delete(args: argparse.Namespace) -> int:
     delete_bookmark(args.id)
     return 0
 
+
+def _cmd_history_list(_: argparse.Namespace) -> int:
+    view_history()
+    return 0
+
+
+def _cmd_history_clear(_: argparse.Namespace) -> int:
+    clear_history()
+    return 0
+  
+def _cmd_bookmark_delete(args: argparse.Namespace) -> int:
+    delete_bookmark(args.id)
+    return 0
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="LexTransition-AI CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -100,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     diag_cmd = sub.add_parser("diagnostics", help="Show runtime diagnostics")
     diag_cmd.set_defaults(func=_cmd_diagnostics)
+
+    history_list = sub.add_parser("history-list", help="View search history")
+    history_list.set_defaults(func=_cmd_history_list)
+
+    history_clear = sub.add_parser("history-clear", help="Clear search history")
+    history_clear.set_defaults(func=_cmd_history_clear)
 
         # Bookmark Commands
     bookmark_add = sub.add_parser("bookmark-add", help="Add a bookmark with notes")
