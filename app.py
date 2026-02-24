@@ -13,6 +13,7 @@ from engine.risk_analyzer import analyze_risk
 from engine.bail_analyzer import analyze_bail
 from engine.summarizer import generate_summary
 from engine.deadline_extractor import analyze_deadlines
+from engine.pdf_exporter import generate_pdf_report
 
 # Import STT engine
 from engine.stt_handler import get_stt_engine
@@ -659,7 +660,7 @@ try:
             st.write("###")
 
             # --- STEP 3: Action Buttons ---
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b, col_c, col_d = st.columns(4)
             
             with col_a:
                 if st.button("🤖 Analyze Differences (AI)", use_container_width=True):
@@ -689,7 +690,34 @@ try:
 
                     else:
                         st.error("❌ LLM Engine failed to generate summary.")
+            with col_d:
+                if st.button("📄 Export PDF", use_container_width=True):
 
+                    try:
+                        mapping_data = {
+                            "IPC Section": ipc,
+                            "BNS Section": bns,
+                            "Notes": notes,
+                            "Source": source,
+                        }
+
+                        pdf_path = generate_pdf_report(
+                            filename=f"mapping_{ipc}.pdf",
+                            mapping_data=mapping_data,
+                        )
+
+                        with open(pdf_path, "rb") as f:
+                            st.download_button(
+                                "⬇ Download Report",
+                                f,
+                                file_name=f"mapping_{ipc}.pdf",
+                                mime="application/pdf",
+                            )
+
+                        st.success("✅ PDF generated successfully!")
+
+                    except Exception as e:
+                        st.error(f"❌ Failed to generate PDF: {e}")
             # --- STEP 4: Persistent Views (Rendered outside the columns) ---
             
             # 1. AI Analysis View
