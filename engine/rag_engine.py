@@ -10,6 +10,7 @@ import glob
 import re
 import json
 import hashlib
+from PIL.Image import item
 import streamlit as st
 import numpy as np
 import logging
@@ -216,22 +217,60 @@ def _emb_search(query: str, top_k: int = 3):
         
         
         results = scores[:top_k]
-        md = ["> **Answer (embedding search, grounded):**\n"]
+
+        structured = []
         for sim, file, page, text in results:
-            snippet = text[:300].replace("\n", " ")
-            md.append(f"> - **Source:** {file} | **Page:** {page} | **Score:** {sim:.3f}\n>   > _{snippet}_\n")
-        return "\n".join(md)
+            structured.append({
+                "file": file,
+                "page": page,
+                "text": text,
+                "vector_score": float(sim)
+            })
+
+        return structured
     except Exception:
         return None
 
+def _keyword_search(query: str, top_k: int = 3):
+    if not _INDEX_LOADED:
+        index_pdfs()
+    if not _INDEX:
+        return []
+
+    tokens = _tokenize_query(query.strip())
+    if not tokens:
+        return []
+
+    results = []
+
+    for doc in _INDEX:
+        txt = doc["text"].lower()
+        score = sum(txt.count(t) for t in tokens)
+
+        if score > 0:
+            results.append({
+                "file": doc["file"],
+                "page": doc["page"],
+                "text": doc["text"],
+                "keyword_score": float(score)
+            })
+
+    results.sort(key=lambda x: x["keyword_score"], reverse=True)
+    return results[:top_k]
+
 def search_pdfs(query: str, top_k: int = 3):
     """
-    Default: if an embeddings engine is configured -> use it.
-    Else if internal embeddings available -> use that.
-    Else -> keyword page-count search.
+    Hybrid Retrieval:
+    - Runs vector search (if available)
+    - Runs keyword search
+    - Merges + deduplicates
+    - Applies weighted hybrid scoring
+    - Returns structured confidence results
     """
+
     if not query or not query.strip():
         return None
+
     if top_k <= 0:
         return None
 
