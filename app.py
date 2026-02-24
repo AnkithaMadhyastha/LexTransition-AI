@@ -13,7 +13,11 @@ from engine.risk_analyzer import analyze_risk
 from engine.bail_analyzer import analyze_bail
 from engine.summarizer import generate_summary
 from engine.deadline_extractor import analyze_deadlines
+
+from engine.pdf_exporter import generate_pdf_report
+
 from engine.bookmark_manager import add_bookmark
+
 
 # Import STT engine
 from engine.stt_handler import get_stt_engine
@@ -697,6 +701,35 @@ try:
                     else:
                         st.error("❌ LLM Engine failed to generate summary.")
             with col_d:
+
+                if st.button("📄 Export PDF", use_container_width=True):
+
+                    try:
+                        mapping_data = {
+                            "IPC Section": ipc,
+                            "BNS Section": bns,
+                            "Notes": notes,
+                            "Source": source,
+                        }
+
+                        pdf_path = generate_pdf_report(
+                            filename=f"mapping_{ipc}.pdf",
+                            mapping_data=mapping_data,
+                        )
+
+                        with open(pdf_path, "rb") as f:
+                            st.download_button(
+                                "⬇ Download Report",
+                                f,
+                                file_name=f"mapping_{ipc}.pdf",
+                                mime="application/pdf",
+                            )
+
+                        st.success("✅ PDF generated successfully!")
+
+                    except Exception as e:
+                        st.error(f"❌ Failed to generate PDF: {e}")
+
                 if st.button("🔖 Save to Bookmarks", use_container_width=True):
                     try:
                         section = f"IPC {ipc} → {bns}"
