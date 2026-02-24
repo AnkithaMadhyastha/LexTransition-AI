@@ -10,6 +10,7 @@ import glob
 import re
 import json
 import hashlib
+from PIL.Image import item
 import streamlit as st
 import numpy as np
 
@@ -196,61 +197,142 @@ def _emb_search(query: str, top_k: int = 3):
         scores.sort(key=lambda x: x[0], reverse=True)
         
         results = scores[:top_k]
-        md = ["> **Answer (embedding search, grounded):**\n"]
+
+        structured = []
         for sim, file, page, text in results:
-            snippet = text[:300].replace("\n", " ")
-            md.append(f"> - **Source:** {file} | **Page:** {page} | **Score:** {sim:.3f}\n>   > _{snippet}_\n")
-        return "\n".join(md)
+            structured.append({
+                "file": file,
+                "page": page,
+                "text": text,
+                "vector_score": float(sim)
+            })
+
+        return structured
     except Exception:
         return None
 
-def search_pdfs(query: str, top_k: int = 3):
-    """
-    Default: if an embeddings engine is configured -> use it.
-    Else if internal embeddings available -> use that.
-    Else -> keyword page-count search.
-    """
-    if not query or not query.strip():
-        return None
-    if top_k <= 0:
-        return None
-
-    # (Keep your existing external engine logic here)
-    if os.environ.get("LTA_USE_EMBEDDINGS") == "1" and _EMB_ENGINE_AVAILABLE:
-        try:
-            emb_res = _emb_search_index(query, top_k=top_k)
-            if emb_res:
-                return emb_res
-        except Exception as e:
-            print(f"External Embeddings Engine Failed: {e}")
-
-    # Internal embeddings fallback
-    if _USE_EMB and _EMB_AVAILABLE:
-        emb_res = _emb_search(query, top_k=top_k)
-        if emb_res:
-            return emb_res
-
-    # (Keep your token-count fallback here)
+def _keyword_search(query: str, top_k: int = 3):
     if not _INDEX_LOADED:
         index_pdfs()
     if not _INDEX:
-        return None
+        return []
+
     tokens = _tokenize_query(query.strip())
     if not tokens:
-        return None
-    scored = []
+        return []
+
+    results = []
+
     for doc in _INDEX:
         txt = doc["text"].lower()
         score = sum(txt.count(t) for t in tokens)
+
         if score > 0:
-            first_pos = min((txt.find(t) for t in tokens if txt.find(t) >= 0), default=-1)
-            snippet = doc["text"][first_pos:first_pos+300].replace("\n"," ") if first_pos >= 0 else doc["text"][:200]
-            scored.append((score, doc["file"], doc["page"], snippet))
-    if not scored:
+            results.append({
+                "file": doc["file"],
+                "page": doc["page"],
+                "text": doc["text"],
+                "keyword_score": float(score)
+            })
+
+    results.sort(key=lambda x: x["keyword_score"], reverse=True)
+    return results[:top_k]
+
+def search_pdfs(query: str, top_k: int = 3):
+    """
+    Hybrid Retrieval:
+    - Runs vector search (if available)
+    - Runs keyword search
+    - Merges + deduplicates
+    - Applies weighted hybrid scoring
+    - Returns structured confidence results
+    """
+
+    if not query or not query.strip():
         return None
-    scored.sort(key=lambda x: x[0], reverse=True)
-    results = scored[:top_k]
-    md_lines = ["> **Answer (grounded snippets):**\n"]
-    for score, file, page, snippet in results:
-        md_lines.append(f"> - **Source:** {file} | **Page:** {page}\n>   > _{snippet.strip()}_\n")
-    return "\n".join(md_lines)
+
+    if top_k <= 0:
+        return None
+
+    # Ensure index loaded
+    if not _INDEX_LOADED:
+        index_pdfs()
+
+    if not _INDEX:
+        return None
+
+    # --- Run Both Retrieval Methods ---
+    vector_results = []
+    keyword_results = []
+
+    if _USE_EMB and _EMB_AVAILABLE:
+        vector_results = _emb_search(query, top_k=top_k) or []
+
+    keyword_results = _keyword_search(query, top_k=top_k) or []
+
+    # --- Merge & Deduplicate ---
+    combined = {}
+
+    # Add vector results
+    for r in vector_results:
+        key = (r["file"], r["page"])
+        combined[key] = {
+            "file": r["file"],
+            "page": r["page"],
+            "text": r["text"],
+            "vector_score": r.get("vector_score", 0.0),
+            "keyword_score": 0.0
+        }
+
+    # Add keyword results
+    for r in keyword_results:
+        key = (r["file"], r["page"])
+        if key not in combined:
+            combined[key] = {
+                "file": r["file"],
+                "page": r["page"],
+                "text": r["text"],
+                "vector_score": 0.0,
+                "keyword_score": r.get("keyword_score", 0.0)
+            }
+        else:
+            combined[key]["keyword_score"] = r.get("keyword_score", 0.0)
+
+    # --- Weighted Re-Ranking ---
+    WEIGHT_VECTOR = float(os.environ.get("LTA_VECTOR_WEIGHT", 0.7))
+    WEIGHT_KEYWORD = float(os.environ.get("LTA_KEYWORD_WEIGHT", 0.3))
+
+    final_results = []
+
+    # Normalize keyword scores
+    max_keyword = max((item["keyword_score"] for item in combined.values()), default=1.0)
+    if max_keyword == 0:
+        max_keyword = 1.0
+
+    for item in combined.values():
+        normalized_keyword = item["keyword_score"] / max_keyword
+
+        hybrid_score = (
+            WEIGHT_VECTOR * item["vector_score"] +
+            WEIGHT_KEYWORD * normalized_keyword
+        )
+
+        item["normalized_keyword_score"] = float(normalized_keyword)
+        item["hybrid_score"] = float(hybrid_score)
+        final_results.append(item)
+        confidence = round(hybrid_score * 100, 2)
+        item["confidence_percent"] = confidence
+
+    final_results.sort(key=lambda x: x["hybrid_score"], reverse=True)
+
+    top_results = final_results[:top_k]
+
+    # --- Return Structured Output ---
+    return {
+        "results": top_results,
+        "retrieval_type": "hybrid",
+        "weights": {
+            "vector": WEIGHT_VECTOR,
+            "keyword": WEIGHT_KEYWORD
+        }
+    }
